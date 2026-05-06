@@ -42,44 +42,83 @@ def _is_single_token(tokenizer, text: str) -> bool:
     return len(ids) == 1
 
 
-def _operand_token_ok(tokenizer, n: int) -> bool:
-    """Operand appears in two contexts in the prompt:
-       - mid-prompt with no leading space (immediately after '. ' or '\\n')
-       - mid-prompt with a leading space (e.g., after a previous token)
+def _audit_pair_in_prompt(tokenizer, template: str, a: int, b: int):
+    """Tokenize the actual prompt for (a, b) and check that:
+      - operand a appears as a single token in the prompt
+      - operand b appears as a single token (at a later position than a)
+      - the answer s = a + b is a single token (alone, since it follows '=')
 
-    For BPE tokenizers, " 42" and "42" can map to different token ids; we
-    require BOTH to be single tokens, since we don't control which form the
-    tokenizer produces from a given prompt position.
+    Returning the full reason list lets us diagnose drops post-hoc.
+
+    Why prompt-context: tokenizers differ on whether a leading space is
+    merged with the following number. GPT-2 BPE (GPT-J, Pythia) merges
+    " 42" -> single token; Llama 3 BPE (tiktoken-style) keeps " 42" as
+    [space, number] -> two tokens. The right check is "does the operand
+    appear as a single token at its expected position in the prompt",
+    which we verify by tokenizing the full prompt.
     """
-    return _is_single_token(tokenizer, str(n)) and _is_single_token(tokenizer, " " + str(n))
+    prompt = template.format(a=a, b=b)
+    ids = tokenizer.encode(prompt, add_special_tokens=False)
+    decoded = [tokenizer.decode([i]) for i in ids]
 
+    a_str = str(a)
+    b_str = str(b)
 
-def _answer_token_ok(tokenizer, s: int) -> bool:
-    """The answer follows '=' so the tokenizer typically does NOT produce a
-    leading space for the next-token prediction. We require the no-space form
-    to be single-token; the space form is also checked for diagnostic logging
-    but is not gating.
-    """
-    return _is_single_token(tokenizer, str(s))
+    # Locate operand a: first token whose stripped decode equals str(a).
+    a_idx = None
+    for i, t in enumerate(decoded):
+        if t.strip() == a_str:
+            a_idx = i
+            break
+
+    # Locate operand b: next single-token match strictly after a_idx.
+    b_idx = None
+    if a_idx is not None:
+        for i in range(a_idx + 1, len(decoded)):
+            if decoded[i].strip() == b_str:
+                b_idx = i
+                break
+
+    # Answer is checked alone (it follows "=" so leading space doesn't apply).
+    s = a + b
+    s_ok = _is_single_token(tokenizer, str(s))
+
+    reasons = []
+    if a_idx is None:
+        reasons.append(f"operand_a={a}_not_single_token_in_prompt")
+    if b_idx is None:
+        reasons.append(f"operand_b={b}_not_single_token_in_prompt")
+    if not s_ok:
+        reasons.append(f"answer_s={s}_multitoken")
+
+    return {
+        "a_idx": a_idx,
+        "b_idx": b_idx,
+        "s_ok": s_ok,
+        "reasons": reasons,
+        "ok": not reasons,
+    }
 
 
 def audit_tokenizer(tokenizer, model_key: str) -> Dict:
-    """Run the audit for one tokenizer.
+    """Run the audit for one tokenizer using prompt-context checks.
 
     Returns a dict with:
       'model':              model_key
       'prompt_template':    the template used
-      'retained':           list of {a, b, s} dicts for retained pairs
-      'dropped':            list of {a, b, s, reason} dicts for dropped pairs
+      'retained':           list of {a, b, s, a_idx, b_idx} dicts for retained pairs
+      'dropped':            list of {a, b, s, reasons} dicts for dropped pairs
       'n_retained':         int
       'n_dropped':          int
-      'operand_ok':         dict mapping str(n) -> bool, for n in 0..99
-      'answer_ok':          dict mapping str(s) -> bool, for s in 0..198
+      'operand_ok':         dict str(n) -> bool, for n in 0..99 (bare-string
+                            single-token check; diagnostic only)
+      'answer_ok':          dict str(s) -> bool, for s in 0..198
     """
-    # Pre-compute per-integer single-token status (we only call the tokenizer 100+199 times,
-    # not 10000+ times).
-    operand_ok = {n: _operand_token_ok(tokenizer, n) for n in OPERAND_RANGE}
-    answer_ok = {s: _answer_token_ok(tokenizer, s) for s in ANSWER_RANGE}
+    template = PROMPT_TEMPLATES[model_key]
+
+    # Diagnostic-only per-integer checks (not gating).
+    operand_bare_ok = {n: _is_single_token(tokenizer, str(n)) for n in OPERAND_RANGE}
+    answer_ok = {s: _is_single_token(tokenizer, str(s)) for s in ANSWER_RANGE}
 
     retained: List[Dict] = []
     dropped: List[Dict] = []
@@ -87,26 +126,23 @@ def audit_tokenizer(tokenizer, model_key: str) -> Dict:
     for a in OPERAND_RANGE:
         for b in OPERAND_RANGE:
             s = a + b
-            reasons = []
-            if not operand_ok[a]:
-                reasons.append(f"operand_a={a}_multitoken")
-            if not operand_ok[b]:
-                reasons.append(f"operand_b={b}_multitoken")
-            if not answer_ok[s]:
-                reasons.append(f"answer_s={s}_multitoken")
-            if reasons:
-                dropped.append({"a": a, "b": b, "s": s, "reasons": reasons})
+            res = _audit_pair_in_prompt(tokenizer, template, a, b)
+            if res["ok"]:
+                retained.append({
+                    "a": a, "b": b, "s": s,
+                    "a_idx": res["a_idx"], "b_idx": res["b_idx"],
+                })
             else:
-                retained.append({"a": a, "b": b, "s": s})
+                dropped.append({"a": a, "b": b, "s": s, "reasons": res["reasons"]})
 
     return {
         "model": model_key,
-        "prompt_template": PROMPT_TEMPLATES[model_key],
+        "prompt_template": template,
         "retained": retained,
         "dropped": dropped,
         "n_retained": len(retained),
         "n_dropped": len(dropped),
-        "operand_ok": {str(k): bool(v) for k, v in operand_ok.items()},
+        "operand_ok": {str(k): bool(v) for k, v in operand_bare_ok.items()},
         "answer_ok": {str(k): bool(v) for k, v in answer_ok.items()},
     }
 
@@ -160,36 +196,56 @@ if __name__ == "__main__":
     # token and sanity-checks the audit machinery.
 
     class FakeTokenizer:
+        """Tokenizer where every integer 0..200 is a single token equal to its value,
+        and the prompt template tokens are individual integer ids."""
         def encode(self, text, add_special_tokens=False):
-            # Single-token if text (stripped) is in 0..200; otherwise multi-token.
-            stripped = text.strip()
-            try:
-                n = int(stripped)
-                if 0 <= n <= 200:
-                    return [n]
-                return [99, 100]   # multi-token
-            except ValueError:
-                return [99, 100]
+            # Tokenize a prompt by splitting on word boundaries; each integer
+            # 0..200 becomes a single token.
+            import re
+            ids = []
+            for piece in re.findall(r'\d+|\D+', text):
+                if piece.isdigit():
+                    n = int(piece)
+                    if 0 <= n <= 200:
+                        ids.append(n)
+                    else:
+                        ids.extend([99, 100])
+                else:
+                    # Map non-digit chunks to a fixed dummy id (200 + len).
+                    ids.append(500)
+            return ids
+        def decode(self, ids):
+            # Reverse: integer-valued tokens decode to str(n); dummy decodes to "<x>".
+            parts = []
+            for i in ids:
+                if 0 <= i <= 200:
+                    parts.append(str(i))
+                else:
+                    parts.append("<x>")
+            return ''.join(parts)
 
     tok = FakeTokenizer()
     audit = audit_tokenizer(tok, "gpt-j-6b")
     print(summary_report([audit], []))
     assert audit["n_retained"] == 10000, "fake tokenizer should retain all"
 
-    # Now break it: pretend "100" is multi-token.
+    # Now break it: pretend "100" tokenizes to two tokens (operand or answer).
     class FakeBroken(FakeTokenizer):
         def encode(self, text, add_special_tokens=False):
-            stripped = text.strip()
-            if stripped == "100":
-                return [99, 100]
-            return super().encode(text, add_special_tokens=add_special_tokens)
+            ids = super().encode(text, add_special_tokens=add_special_tokens)
+            # Split any 100 token into [99, 1] (multi-token) for this fake.
+            new_ids = []
+            for i in ids:
+                if i == 100:
+                    new_ids.extend([99, 1])
+                else:
+                    new_ids.append(i)
+            return new_ids
 
     audit2 = audit_tokenizer(FakeBroken(), "pythia-6.9b")
     intersection = intersect_audits([audit, audit2])
     print(summary_report([audit, audit2], intersection))
-    # 100 is dropped only on model-2 audit (answer s=100 path); intersection
-    # excludes any (a, b) with a+b == 100 because of model-2 -- 99 such pairs.
-    assert audit2["n_retained"] < 10000
+    assert audit2["n_retained"] < 10000, "FakeBroken should drop the 100 cases"
     assert len(intersection) <= audit2["n_retained"]
 
     print("OK: tokenizer_audit self-test passed.")
