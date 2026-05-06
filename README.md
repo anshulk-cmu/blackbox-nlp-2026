@@ -81,12 +81,13 @@ Expected output: `45 PASS / 0 FAIL (45 total)`. If anything fails, do not procee
 ├── full_paper_plan.md               ← methodology (3207 lines)
 ├── colab_execution_plan.md          ← operations (738 lines)
 ├── code/
-│   └── tokenizer_audit.py           ← Phase 1 utility (used by 01_tokenizer_audit.ipynb)
+│   ├── tokenizer_audit.py           ← Phase 1 utility (used by 01_tokenizer_audit.ipynb)
+│   └── accuracy_check.py            ← Phase 2 utility (used by 02a/02b/02c)
 ├── notebooks/
-│   ├── 01_tokenizer_audit.ipynb     ← Phase 1 (CPU, 10 min)
-│   ├── 02a_accuracy_gptj.ipynb      ← Phase 2 (T4, 2h)        [TODO]
-│   ├── 02b_accuracy_pythia.ipynb    ← Phase 2 (T4, 2h)        [TODO]
-│   ├── 02c_accuracy_llama.ipynb     ← Phase 2 (A100, 3h)      [TODO]
+│   ├── 01_tokenizer_audit.ipynb     ← Phase 1 (CPU, 10 min)   ✓
+│   ├── 02a_accuracy_gptj.ipynb      ← Phase 2 (A100, 15m)     ✓
+│   ├── 02b_accuracy_pythia.ipynb    ← Phase 2 (A100, 15m)     ✓
+│   ├── 02c_accuracy_llama.ipynb     ← Phase 2 (A100, 15m)     ✓
 │   ├── 03a_extract_gptj.ipynb       ← Phase 3 (A100, 3h)      [TODO]
 │   ├── 03b_extract_pythia.ipynb     ← Phase 3 (A100, 3h)      [TODO]
 │   ├── 03c_extract_llama.ipynb      ← Phase 3 (A100, 3h)      [TODO]
