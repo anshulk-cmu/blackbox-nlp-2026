@@ -159,8 +159,9 @@ drive.mount('/content/drive')
 import os
 PROJECT = '/content/drive/MyDrive/blackbox_nlp_2026'
 CODE_DIR = f'{PROJECT}/code'
+REPO_URL = 'https://github.com/anshulk-cmu/blackbox-nlp-2026.git'
 if not os.path.exists(CODE_DIR):
-    !git clone <git_url_here> {CODE_DIR}
+    !git clone {REPO_URL} {CODE_DIR}
 %cd {CODE_DIR}
 !git pull --ff-only
 
@@ -176,7 +177,10 @@ if not os.path.exists(CODE_DIR):
   matplotlib==3.9.2 \
   tqdm==4.66.5
 
-# 4. HuggingFace login (needed for Llama 3.1)
+# 4. HuggingFace login (needed for Llama 3.1).
+#    HF_TOKEN must be stored in Colab Secrets (🔑 sidebar in the notebook,
+#    NOT in any committed file). The token must have READ scope and the
+#    Llama 3.1 license must be accepted on the HF account that issued it.
 from google.colab import userdata
 import huggingface_hub
 huggingface_hub.login(userdata.get('HF_TOKEN'))
@@ -209,28 +213,42 @@ In the Colab UI: **Runtime → Change runtime type → Hardware accelerator → 
 
 **Owner: Anshul, ~30 min on local laptop.**
 
+**Account note.** Colab Pro+ is on `work.anshul95@gmail.com`. All Drive
+paths in §2 of this document assume that account is the active one when the
+notebook is opened. The Drive root therefore is
+`/content/drive/MyDrive/blackbox_nlp_2026/` on `work.anshul95@gmail.com`.
+GitHub repo is on `anshulk-cmu` (separate account, SSH-authed locally,
+HTTPS clone in Colab via the public repo URL).
+
 Steps:
 
 1. **Push the current repo** (toy/, paper_math.md, full_paper_plan.md, this
-   file) to a private GitHub repo if not already. Notebooks will git clone
-   from here.
-2. **Add Llama 3.1 license agreement** at https://huggingface.co/meta-llama/Llama-3.1-8B (request access, takes ~minutes).
+   file) to a GitHub repo. **Done 2026-05-06 →
+   https://github.com/anshulk-cmu/blackbox-nlp-2026.** Notebooks
+   `git clone https://github.com/anshulk-cmu/blackbox-nlp-2026.git`.
+2. **Add Llama 3.1 license agreement** at
+   https://huggingface.co/meta-llama/Llama-3.1-8B (request access on the HF
+   account that will issue the token used in Colab Secrets — typically the
+   same account as `work.anshul95@gmail.com` for clean isolation).
 3. **Create HuggingFace token** at https://huggingface.co/settings/tokens
-   with read access. Store as a Colab Secret named `HF_TOKEN`
-   (Colab notebook: 🔑 sidebar → Add new secret).
-4. **Create the Drive folder** `/MyDrive/blackbox_nlp_2026/` (empty;
-   notebooks will populate it).
-5. **Confirm Colab Pro / Pro+ subscription is active** (compute units > 100).
+   with **read** access. Store as a Colab Secret named `HF_TOKEN`
+   (Colab notebook: 🔑 sidebar → Add new secret). **Never paste this token
+   into chat, commit, or write to any file.**
+4. **Create the Drive folder** `/MyDrive/blackbox_nlp_2026/` on
+   `work.anshul95@gmail.com` (empty; notebooks will populate it).
+5. **Confirm Colab Pro / Pro+ subscription is active on
+   `work.anshul95@gmail.com`** (compute units > 100).
 6. **Read this document end-to-end** before starting any phase.
 
 Pre-flight checklist (must all be ✓ before Phase 1):
 
-- [ ] Repo pushed to GitHub (private OK).
+- [x] Repo pushed to GitHub (public, anshulk-cmu/blackbox-nlp-2026). Done 2026-05-06.
 - [ ] Llama 3.1 license accepted on HF.
-- [ ] HF_TOKEN stored in Colab Secrets.
-- [ ] `/MyDrive/blackbox_nlp_2026/` folder exists.
-- [ ] Colab Pro or Pro+ active.
-- [ ] toy/run_toy.py passes 45/45 PASS locally (sanity check that the analysis code is healthy).
+- [ ] HF_TOKEN stored in Colab Secrets (revoke any token that was ever
+      pasted in chat or file; create a fresh read-scope one).
+- [ ] `/MyDrive/blackbox_nlp_2026/` folder exists on work.anshul95@gmail.com.
+- [ ] Colab Pro or Pro+ active on work.anshul95@gmail.com.
+- [ ] `python toy/run_toy.py` passes 45/45 PASS locally (sanity check that the analysis code is healthy).
 
 ---
 
