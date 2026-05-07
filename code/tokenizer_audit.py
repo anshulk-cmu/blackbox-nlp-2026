@@ -43,19 +43,27 @@ def _is_single_token(tokenizer, text: str) -> bool:
 
 
 def _audit_pair_in_prompt(tokenizer, template: str, a: int, b: int):
-    """Tokenize the actual prompt for (a, b) and check that:
-      - operand a appears as a single token in the prompt
-      - operand b appears as a single token (at a later position than a)
-      - the answer s = a + b is a single token (alone, since it follows '=')
+    """Tokenize the actual prompt for (a, b) and find operand positions.
 
-    Returning the full reason list lets us diagnose drops post-hoc.
+    Returns dict with keys:
+      a_idx, b_idx: indices of operand tokens in the prompt tokenization,
+                    or None if operand is not a single contiguous token.
+                    For multi-token operands (Llama 3 splits "42" into
+                    ['4','2']), this is None and we accept that — Phase 3
+                    extracts at the '=' token, NOT at operand positions.
+      first_answer_token_id: int, the token id the model would need to
+                             predict at the '=' position to be "correct"
+                             on the FIRST token of the answer string.
+                             For single-token answers (GPT-J/Pythia) this
+                             IS the answer. For multi-token (Llama 3.1) it
+                             is the first character of str(s).
+      first_answer_token_str: the decoded form of that token (for sanity).
+      s_is_single_token: True if str(s) tokenizes to one token.
+      reasons: empty unless something is structurally broken with the prompt.
 
-    Why prompt-context: tokenizers differ on whether a leading space is
-    merged with the following number. GPT-2 BPE (GPT-J, Pythia) merges
-    " 42" -> single token; Llama 3 BPE (tiktoken-style) keeps " 42" as
-    [space, number] -> two tokens. The right check is "does the operand
-    appear as a single token at its expected position in the prompt",
-    which we verify by tokenizing the full prompt.
+    The audit's `ok` flag is now: "the prompt tokenizes without error AND
+    the first answer token is well-defined". This retains all (a, b) on
+    Llama where the previous strict check dropped everything.
     """
     prompt = template.format(a=a, b=b)
     ids = tokenizer.encode(prompt, add_special_tokens=False)
@@ -64,14 +72,13 @@ def _audit_pair_in_prompt(tokenizer, template: str, a: int, b: int):
     a_str = str(a)
     b_str = str(b)
 
-    # Locate operand a: first token whose stripped decode equals str(a).
+    # Locate operand a: first token whose stripped decode equals str(a). May be None.
     a_idx = None
     for i, t in enumerate(decoded):
         if t.strip() == a_str:
             a_idx = i
             break
 
-    # Locate operand b: next single-token match strictly after a_idx.
     b_idx = None
     if a_idx is not None:
         for i in range(a_idx + 1, len(decoded)):
@@ -79,22 +86,23 @@ def _audit_pair_in_prompt(tokenizer, template: str, a: int, b: int):
                 b_idx = i
                 break
 
-    # Answer is checked alone (it follows "=" so leading space doesn't apply).
+    # First token the model needs to predict at '=' for a 'correct' answer.
     s = a + b
-    s_ok = _is_single_token(tokenizer, str(s))
+    answer_ids = tokenizer.encode(str(s), add_special_tokens=False)
+    s_is_single = len(answer_ids) == 1
+    first_answer_token_id = int(answer_ids[0]) if answer_ids else None
+    first_answer_token_str = tokenizer.decode([first_answer_token_id]) if answer_ids else ""
 
     reasons = []
-    if a_idx is None:
-        reasons.append(f"operand_a={a}_not_single_token_in_prompt")
-    if b_idx is None:
-        reasons.append(f"operand_b={b}_not_single_token_in_prompt")
-    if not s_ok:
-        reasons.append(f"answer_s={s}_multitoken")
+    if not answer_ids:
+        reasons.append(f"answer_s={s}_empty_tokenization")
 
     return {
         "a_idx": a_idx,
         "b_idx": b_idx,
-        "s_ok": s_ok,
+        "first_answer_token_id": first_answer_token_id,
+        "first_answer_token_str": first_answer_token_str,
+        "s_is_single_token": s_is_single,
         "reasons": reasons,
         "ok": not reasons,
     }
@@ -103,20 +111,33 @@ def _audit_pair_in_prompt(tokenizer, template: str, a: int, b: int):
 def audit_tokenizer(tokenizer, model_key: str) -> Dict:
     """Run the audit for one tokenizer using prompt-context checks.
 
-    Returns a dict with:
+    Retention rule (post-fix for Llama 3.1):
+      A pair (a, b) is retained if the prompt tokenizes without error and
+      the answer's first token is well-defined. We do NOT require the
+      operand or full answer to be single-token, because:
+        - For Phase 3 activation extraction, we extract at the '=' token.
+        - For Phase 2 accuracy reproduction, single-token answers use
+          1-step argmax; multi-token answers use generate(max_new_tokens).
+      The diagnostic fields `operand_ok` (bare-string single-token check)
+      and `s_is_single_token` are recorded per-pair so Phase 2 can route
+      the right decoding strategy per model.
+
+    Returns dict with:
       'model':              model_key
       'prompt_template':    the template used
-      'retained':           list of {a, b, s, a_idx, b_idx} dicts for retained pairs
-      'dropped':            list of {a, b, s, reasons} dicts for dropped pairs
+      'retained':           list of {a, b, s, a_idx, b_idx,
+                                     first_answer_token_id,
+                                     first_answer_token_str,
+                                     s_is_single_token} dicts
+      'dropped':            list of {a, b, s, reasons} dicts
       'n_retained':         int
       'n_dropped':          int
-      'operand_ok':         dict str(n) -> bool, for n in 0..99 (bare-string
-                            single-token check; diagnostic only)
-      'answer_ok':          dict str(s) -> bool, for s in 0..198
+      'all_answers_single_token': bool (True for GPT-J/Pythia, False for Llama)
+      'operand_ok':         dict str(n) -> bool, diagnostic only
+      'answer_ok':          dict str(s) -> bool, diagnostic only
     """
     template = PROMPT_TEMPLATES[model_key]
 
-    # Diagnostic-only per-integer checks (not gating).
     operand_bare_ok = {n: _is_single_token(tokenizer, str(n)) for n in OPERAND_RANGE}
     answer_ok = {s: _is_single_token(tokenizer, str(s)) for s in ANSWER_RANGE}
 
@@ -130,10 +151,16 @@ def audit_tokenizer(tokenizer, model_key: str) -> Dict:
             if res["ok"]:
                 retained.append({
                     "a": a, "b": b, "s": s,
-                    "a_idx": res["a_idx"], "b_idx": res["b_idx"],
+                    "a_idx": res["a_idx"],
+                    "b_idx": res["b_idx"],
+                    "first_answer_token_id": res["first_answer_token_id"],
+                    "first_answer_token_str": res["first_answer_token_str"],
+                    "s_is_single_token": res["s_is_single_token"],
                 })
             else:
                 dropped.append({"a": a, "b": b, "s": s, "reasons": res["reasons"]})
+
+    all_single = all(answer_ok.values())
 
     return {
         "model": model_key,
@@ -142,6 +169,7 @@ def audit_tokenizer(tokenizer, model_key: str) -> Dict:
         "dropped": dropped,
         "n_retained": len(retained),
         "n_dropped": len(dropped),
+        "all_answers_single_token": all_single,
         "operand_ok": {str(k): bool(v) for k, v in operand_bare_ok.items()},
         "answer_ok": {str(k): bool(v) for k, v in answer_ok.items()},
     }
@@ -245,7 +273,12 @@ if __name__ == "__main__":
     audit2 = audit_tokenizer(FakeBroken(), "pythia-6.9b")
     intersection = intersect_audits([audit, audit2])
     print(summary_report([audit, audit2], intersection))
-    assert audit2["n_retained"] < 10000, "FakeBroken should drop the 100 cases"
-    assert len(intersection) <= audit2["n_retained"]
+    # Relaxed audit retains multi-token-answer pairs (Phase 2 handles decoding).
+    # FakeBroken should still tokenize the prompt structurally OK, so retention is full.
+    assert audit2["n_retained"] == 10000, "Relaxed audit should retain all structurally-OK prompts"
+    # But the per-pair s_is_single_token flag should be False for s=100 cases.
+    multi_pairs = [p for p in audit2["retained"] if not p["s_is_single_token"]]
+    assert len(multi_pairs) > 0, "FakeBroken should produce some multi-token answers"
+    assert audit2["all_answers_single_token"] is False
 
     print("OK: tokenizer_audit self-test passed.")

@@ -60,21 +60,26 @@ configurations) strengthens the archival submission anyway.
 
 ## 0a. Synthetic-toy validation status (added 2026-05-04)
 
-Before running on GPT-J / Pythia / Llama on Colab Pro, we validated the
-entire pipeline against synthetic ground truth in [toy/](toy/). The toy
-plants a known helix with known perturbation directions in `R^{256}`, runs
-every analysis this paper claims to run, and prints a pre-registered
-PASS/FAIL line per metric. **Final result: 45 PASS / 0 FAIL in 244 seconds
-on a CPU after the 2026-05-06 paper_math.md restructuring** (was 27/0
-before E9–E16 were added; see [toy/README.md](toy/README.md) for the full
-breakdown). Every component of the paper's pipeline behaves as predicted
-on data that satisfies Assumption GM exactly.
+Before running on GPT-J / Pythia / Llama on the CMU Babel cluster, we
+validated the entire pipeline against synthetic ground truth in
+[toy/](toy/). The toy plants a known helix with known perturbation
+directions in `R^{256}`, runs every analysis this paper claims to run,
+and prints a pre-registered PASS/FAIL line per metric. **Final result:
+45 PASS / 0 FAIL in 244 seconds on a CPU after the 2026-05-06
+paper_math.md restructuring** (was 27/0 before E9–E16 were added; see
+[toy/README.md](toy/README.md) for the full breakdown). Every component
+of the paper's pipeline behaves as predicted on data that satisfies
+Assumption GM exactly.
 
-**Execution environment.** All real-model runs happen on Google Colab Pro /
-Pro+ (A100 40 GB, V100, T4, L4 GPUs). The full step-by-step execution plan
-is [colab_execution_plan.md](colab_execution_plan.md). Earlier drafts of
-this document referenced CMU Babel; we have pivoted to Colab for faster
-iteration, easier review, and Drive-resident persistent storage.
+**Execution environment.** All real-model runs happen on **CMU Babel**,
+operated through VS Code Remote-SSH for full IDE integration (file
+browser, breakpoints, terminals). SLURM submits batch jobs for GPU phases;
+non-GPU phases run on the login node or interactively. The full
+step-by-step execution plan with SLURM scripts and resumable cache layout
+is [babel_execution_plan.md](babel_execution_plan.md). An earlier draft
+attempted Colab Pro but we pivoted back to Babel for IDE integration,
+80 GB A100s (vs Colab's 40 GB), persistent storage, and SLURM's
+fire-and-forget batch model.
 
 **What passed numerically.**
 - Theorem 1: `T_n` reads `0.012` under H_0 (predicted 0), `0.283` under
@@ -107,7 +112,7 @@ iteration, easier review, and Drive-resident persistent storage.
   precision (1e-15).** This validates the gradient-computation infrastructure
   for the real-model causal pipeline.
 
-**Bugs the toy caught (would have surfaced only on Colab otherwise):**
+**Bugs the toy caught (would have surfaced only on Babel otherwise):**
 1. **T=2 fragility makes the design matrix rank-deficient** at integer inputs.
    `sin(2π·s/2) = sin(πs) = 0` identically on integer s, so the basis is
    effectively 8-D not 9-D. KT note this in their Figure 12; we missed it
@@ -136,15 +141,15 @@ real-model run):
 - Layer selection: the toy operates at one synthetic "layer."
 - Real causal-pipeline plumbing: HuggingFace forward hooks on transformer
   blocks, lm_head logit-difference computation, resumable activation cache
-  on Drive
-  (`/content/drive/MyDrive/blackbox_nlp_2026/activations/{model}/layer_{ℓ}.npz`).
+  on Babel scratch
+  (`/data/user_data/$USER/blackbox/activations/{model}/layer_{ℓ}.npz`).
 
-**Practical implication.** The methodology is locked. The Colab run is now
+**Practical implication.** The methodology is locked. The Babel run is now
 a *systems* validation step, not a *math* validation step. The remaining
 risk is whether the real-model assumptions hold, not whether the analysis
-code does the right thing given clean inputs. The step-by-step Colab
-execution plan with notebook structure, GPU selection, and resume logic
-is in [colab_execution_plan.md](colab_execution_plan.md).
+code does the right thing given clean inputs. The step-by-step Babel
+execution plan with SLURM scripts, conda env, and resume logic is in
+[babel_execution_plan.md](babel_execution_plan.md).
 
 ---
 
@@ -1757,11 +1762,11 @@ candidate layers and a held-out selection rule:
 extract the residual-stream activation at the equals-sign token for every
 problem (correct AND wrong) using HuggingFace forward hooks on
 `transformer.h.{ℓ}` (GPT-J), `gpt_neox.layers.{ℓ}` (Pythia), or
-`model.layers.{ℓ}` (Llama). Cache to Drive at
-`/content/drive/MyDrive/blackbox_nlp_2026/activations/{model}/layer_{ℓ}.npz`
-per [colab_execution_plan.md §2](colab_execution_plan.md). Notebook
+`model.layers.{ℓ}` (Llama). Cache to Babel scratch at
+`/data/user_data/$USER/blackbox/activations/{model}/layer_{ℓ}.npz`
+per [babel_execution_plan.md §2](babel_execution_plan.md). SLURM
 templates and resume logic for the extraction phase live in
-[colab_execution_plan.md §7](colab_execution_plan.md).
+[babel_execution_plan.md §6](babel_execution_plan.md).
 
 **Pre-registration constraint.** The layer-selection step uses only correct
 samples on a held-out 20% fold. The wrong-population analysis (Sections 3.7
@@ -2103,14 +2108,14 @@ estimated from a small batch of finite-difference evaluations.
   V-direction injection still acts in the same direction post-norm).
   KT successfully patched Llama; we follow.
 
-For all three models, we use bf16 weights on Colab Pro A100 40 GB; FP32
+For all three models, we use bf16 weights on Babel A100 80 GB; FP32
 accumulation for hook arithmetic to avoid precision loss in the patch
 operation. Activation cache is fp32 (npz), residuals only at the
 equals-sign token; per-(model, layer) cache size is
 `~5000 × 4096 × 4 bytes ≈ 80 MB`, total 1 GB across three models × four
-candidate layers. Per [colab_execution_plan.md §2](colab_execution_plan.md),
+candidate layers. Per [babel_execution_plan.md §2](babel_execution_plan.md),
 the cache lives at
-`/content/drive/MyDrive/blackbox_nlp_2026/activations/{model}/layer_{ℓ}.npz`.
+`/data/user_data/$USER/blackbox/activations/{model}/layer_{ℓ}.npz`.
 
 #### 3.9.7 Compute budget for the causal experiments
 

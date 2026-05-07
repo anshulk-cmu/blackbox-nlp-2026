@@ -3,11 +3,11 @@
 A self-contained, end-to-end synthetic dress rehearsal of every component of the
 paper's experimental pipeline. The toy plants ground truth we ourselves
 constructed, runs the full math/methodology against it, and verifies that the
-pre-registered pass criteria hold — before we run the real-model notebooks
-on Colab Pro for GPT-J / Pythia / Llama. The toy itself runs purely on CPU
-(local laptop or Colab free runtime; no GPU needed) and finishes in
+pre-registered pass criteria hold — before we book GPU time on Babel for real
+GPT-J / Pythia / Llama runs. The toy itself runs purely on CPU
+(local laptop or any Babel CPU node; no GPU needed) and finishes in
 ~4 minutes; the real-model phases are scripted in
-[colab_execution_plan.md](../colab_execution_plan.md).
+[babel_execution_plan.md](../babel_execution_plan.md).
 
 This README walks through every part of the toy: what each file does, what each
 experiment tests, the exact math being checked, the predictions,
@@ -68,9 +68,9 @@ and each is a 1-to-1 line in run_toy.py against paper_math.md.
 
 The paper plan ([../full_paper_plan.md](../full_paper_plan.md)) lays out a
 10-step experimental pipeline that ends with extracting activations from
-GPT-J 6B, Pythia 6.9B, and Llama 3.1 8B on Colab Pro and running causal-
-intervention experiments. The notebook-by-notebook breakdown is in
-[../colab_execution_plan.md](../colab_execution_plan.md). Each model is
+GPT-J 6B, Pythia 6.9B, and Llama 3.1 8B on Babel and running causal-
+intervention experiments. The phase-by-phase breakdown is in
+[../babel_execution_plan.md](../babel_execution_plan.md). Each model is
 gigabytes of weights and at least an hour of A100 time per pass. If the
 pipeline has a bug — wrong sign on a residual,
 wrong indexing, an off-by-one on the projection, a mis-specified null
@@ -86,7 +86,7 @@ truth and the only thing we don't know is whether the assumptions transfer to
 real activations. If anything FAILs, we know it is either:
 - a math issue in the paper plan (Section 2 has 5 known critical issues from
   the audit), or
-- a code bug that would otherwise have surfaced only on Colab Pro,
+- a code bug that would otherwise have surfaced only on Babel,
 
 and we fix it now, on the laptop, with no compute cost.
 
@@ -1490,8 +1490,8 @@ The full PASS/FAIL table from a clean run after the 2026-05-06 restructure
 ## 10. Bugs and design corrections discovered during the build
 
 The toy caught seven distinct issues that would otherwise have surfaced only
-when the real-model notebooks started running on Colab Pro. Each is documented
-here because the lessons transfer directly.
+when the real-model pipeline started running on Babel. Each is documented here
+because the lessons transfer directly.
 
 ### 10.1 T=2 fragility makes the design matrix rank-deficient
 
@@ -1699,12 +1699,12 @@ A short list, to be honest about the limits of synthetic validation:
   hooks, capturing activations, running the patched forward pass, and reading
   out lm_head logits is not toy-tested.
 - **Long activation cache lifecycle.** The toy doesn't write ~1 GB activation
-  caches to Drive; real-model Colab notebooks need that cache plumbing to be
-  resumable across Colab session timeouts (12–24 h on Pro/Pro+) — see
-  [../colab_execution_plan.md §12](../colab_execution_plan.md).
+  caches to Babel scratch; real-model SLURM jobs need that cache plumbing to
+  be resumable across SLURM preemptions — see
+  [../babel_execution_plan.md §12](../babel_execution_plan.md).
 
 The toy is a math validation, not a systems validation. Both are needed. The
-toy says the math is correct given clean data; the Colab run says we can get
+toy says the math is correct given clean data; the Babel run says we can get
 clean data out of real models.
 
 ---
@@ -1738,15 +1738,15 @@ modulo:
 The values in this README's tables are from the run on May 6, 2026 in the
 `privacy` env on this Windows box (45 PASS / 0 FAIL, ~245 seconds wall
 clock). Re-running on the same machine should reproduce them exactly.
-Re-running on Colab CPU (Linux + MKL) may produce values that differ by
+Re-running on Babel (Linux + MKL) may produce values that differ by
 ~1e-6 in the last decimal but should not flip any pass/fail verdict.
 
 ### 13.3 Wall-clock instability
 
 The 245-second total wall time is approximate. It varies by ±20% depending on
 system load (the laptop is shared with the user's other work). The compute
-itself is deterministic; the wall time is not. On Colab CPU the same toy
-finishes in ~3-4 minutes.
+itself is deterministic; the wall time is not. On a Babel CPU node the same
+toy finishes in ~3-4 minutes.
 
 ---
 
