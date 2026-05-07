@@ -6,7 +6,7 @@
 
 **Authors.** Anshul Kumar, Barnábás Póczos.
 
-**Status.** Methodology locked, math validated (45/45 toy PASS), Babel execution plan finalized (v2, 2026-05-06). Ready for real-model run on **CMU Babel** via VS Code Remote-SSH.
+**Status.** Methodology locked, math validated (45/45 toy PASS), Babel execution plan finalized (v2, 2026-05-06). **Phase 0 complete** (env, HF auth, Llama 3.1 gate, GPU verified on `babel-s9-16` RTX A6000); **Phase 1 complete** (canonical 10K-pair dataset built; comprehensive per-integer tokenization test passed; strict three-way intersection = 10000/10000 — pre-registered gate `n_∩ ≥ 7000` PASS with relaxed-Llama fallback not triggered). **Phase 2 (accuracy reproduction) is unblocked.** Live on **CMU Babel** via VS Code Remote-SSH.
 
 **Working title note.** The earlier theorem-heavy title — *Off-Manifold Failure: A Geometric Test for Localized Computational Errors in Language Models* — led with the infrastructure rather than the finding. The new title leads with the empirical question (arithmetic failures) and the geometric framing (off the number manifold), per [full_paper_plan.md §12.7](full_paper_plan.md). The technical title is preserved internally for cross-references in the math file.
 
@@ -22,9 +22,9 @@
 | [SETUP.md](SETUP.md) | Babel filesystem layout: where the conda env, package cache, and run outputs live on the data drive (so nothing large lands in `$HOME`); per-session activation snippet. |
 | [STATUS.md](STATUS.md) | Project state snapshot — what's installed, verified, and outstanding on this Babel account right now. Updated by hand at the end of each session. |
 | [environment.yml](environment.yml) | Pinned conda environment (`conda env create -f environment.yml`). |
-| [toy/](toy/) | Synthetic-toy validation suite. **45 / 45 PASS in 245s on CPU.** Math verified before any GPU spend. |
-| [code/](code/) | Importable utilities (`tokenizer_audit.py`, `accuracy_check.py`) + per-phase runners (`run_phase{1..7}_*.py`). |
-| [scripts/](scripts/) | Shell wrappers and SLURM `.sbatch` files for each phase. |
+| [toy/](toy/) | Synthetic-toy validation suite. **45 / 45 PASS in 297s on CPU.** Math verified before any GPU spend. |
+| [code/](code/) | Importable utilities + per-phase runners. Phase 1: `_logging.py`, `build_dataset.py`, `tokenizer_audit.py`, `test_tokenizers.py`, `run_phase1_audit.py`. Phase 2: `accuracy_check.py`, `run_phase2_accuracy.py`. Phases 3–7: not yet implemented. |
+| [scripts/](scripts/) | SLURM `.sbatch` files for GPU phases (Phase 2 currently). Phase 1 runs directly via `python` on the GPU node — no shell wrapper needed. |
 | [KT_paper.md](KT_paper.md) | Reference: Kantamneni & Tegmark 2025, *Language models use trigonometry to do addition*. arXiv:2502.00873. |
 
 ---
@@ -44,26 +44,35 @@ Kantamneni and Tegmark 2025 showed GPT-J 6B, Pythia 6.9B, and Llama 3.1 8B encod
 3. **Read [toy/README.md](toy/README.md)** end-to-end (~30 min) to see how the math was validated on synthetic ground truth.
 4. **Read [babel_execution_plan.md](babel_execution_plan.md)** to see how the real-model run is organized (~15 min).
 
-**For the executor (Anshul, when starting Babel work):**
+**For the executor (Anshul, when continuing Babel work):**
 
 0. Open a shell on the Babel node and activate the env per [SETUP.md §3](SETUP.md):
    ```bash
-   export BLACKBOX_DATA=/data/user_data/$USER/blackbox
+   cd /home/anshulk/BlackBox-NLP
+   set -a && source .env && set +a
    conda activate /data/user_data/$USER/envs/blackbox
+   export BLACKBOX_DATA=/data/user_data/$USER/blackbox
    ```
-   The env and `$BLACKBOX_DATA` directory tree are already built on this account; SETUP.md documents the paths and the one-time commands that produced them.
-1. Verify the rest of the [babel_execution_plan.md §19 pre-flight checklist](babel_execution_plan.md) (VS Code Remote-SSH connected, HF login, Llama 3.1 license, all model weights pre-stageable).
-2. Run `python toy/run_toy.py` once. Confirm `45 / 45 PASS`. Do not proceed without this.
-3. Run **Phase 1** (tokenizer audit, ~5 min CPU): `bash scripts/phase1_audit.sh`. Gate: three-way intersection ≥ 7000 pairs.
-4. Submit **Phase 2** (accuracy reproduction, ~3h GPU) for all three models in parallel: `./scripts/submit_all_models.sh 2`. Gate: per-model accuracy within 5pp of KT.
-5. Submit **Phase 3** (activation extraction, ~9h GPU total): `./scripts/submit_all_models.sh 3`. Caches all 4 candidate layers per model.
-6. Run **Phase 4a** (REG diagnostics, ~30 min CPU): `python code/run_phase4a_diagnostics.py`. Gate: σ̂_eff·κ̂_max ≤ 0.1 AND η̂ ≤ 0.1.
-7. Run **Phase 4b** (manifold fit + layer selection, ~30 min CPU): `python code/run_phase4b_manifolds.py`. Gate: held-out R² ≥ 0.9 OR Diffusion Maps fallback.
-8. Run **Phase 5a–5b** (test statistics + localization, ~1h CPU total): `python code/run_phase5a_stats.py && python code/run_phase5b_localization.py`.
-9. Submit **Phase 6** (causal interventions, ~9h GPU total): `./scripts/submit_all_models.sh 6`. Gate: 4 ACE criteria pass on ≥ 2 of 3 models.
-10. Run **Phase 7** (aggregation + figures, ~30 min CPU): `python code/run_phase7_figures.py`. Outputs the 6 paper figures + master results table.
+   The env and `$BLACKBOX_DATA` directory tree are already built on this account. **Do NOT** add `BLACKBOX_DATA` to `~/.bashrc` — other conda envs on this account would pick it up. Re-export per session.
+1. Verify the [babel_execution_plan.md §3.7 pre-flight checklist](babel_execution_plan.md). Phase 0 already signed off — all 8 items green; see [STATUS.md §5](STATUS.md).
+2. Run `python toy/run_toy.py` once. Confirm `45 / 45 PASS`. Already verified 2026-05-06; re-run if env changes.
+3. **Phase 1 — DONE** (2026-05-07). For reference, the four direct commands that produced the current outputs:
+   ```bash
+   python code/build_dataset.py --data-dir "$BLACKBOX_DATA"      # canonical 10K-pair (a,b,s) ground truth
+   python code/tokenizer_audit.py                                # FakeTokenizer self-test
+   python code/test_tokenizers.py --data-dir "$BLACKBOX_DATA"    # comprehensive per-integer test (3 models)
+   python code/run_phase1_audit.py --data-dir "$BLACKBOX_DATA"   # strict audit + intersection
+   ```
+   Result: `n_∩ = 10000 / 10000` (gate ≥ 7000 PASS). See [STATUS.md §3.7](STATUS.md) for the full readout. Outputs at `$BLACKBOX_DATA/{dataset,tokenizer_audit}/`. **No bash script needed**: scripts/phase1_audit.sh was deleted as obsolete (broken on prefix-activated env).
+4. **Phase 2** (accuracy reproduction, ~3 h GPU) — **next up**. Requires a 1-line edit at [code/run_phase2_accuracy.py:75](code/run_phase2_accuracy.py) to consume the new per-model schema (`p["first_answer_token_id_per_model"][args.model]` instead of `p["first_answer_token_id"]`). Then submit one SLURM job per model: `sbatch scripts/phase2_accuracy.sbatch <model>`. Gate: per-model accuracy within 5pp of KT (80.5 / 77.2 / 98).
+5. Submit **Phase 3** (activation extraction, ~9 h GPU total): runners not yet implemented. Caches all 4 candidate layers per model.
+6. Run **Phase 4a** (REG diagnostics, ~30 min CPU): runners not yet implemented. Gate: σ̂_eff·κ̂_max ≤ 0.1 AND η̂ ≤ 0.1.
+7. Run **Phase 4b** (manifold fit + layer selection, ~30 min CPU): runners not yet implemented. Gate: held-out R² ≥ 0.9 OR Diffusion Maps fallback.
+8. Run **Phase 5a–5b** (test statistics + localization, ~1h CPU total): runners not yet implemented.
+9. Submit **Phase 6** (causal interventions, ~9 h GPU total): runners not yet implemented. Gate: 4 ACE criteria pass on ≥ 2 of 3 models.
+10. Run **Phase 7** (aggregation + figures, ~30 min CPU): runners not yet implemented. Outputs the 6 paper figures + master results table.
 
-Total elapsed: ~3–5 days including SLURM queue waits; ~24 GPU-hours + ~3 CPU-hours of actual compute. Every phase is resumable from per-batch partials.
+Total elapsed (estimate from current state): ~3–5 days including SLURM queue waits; ~24 GPU-hours + ~3 CPU-hours of actual compute. Every phase is resumable from per-batch partials.
 
 ---
 
@@ -108,12 +117,14 @@ Expected output: `45 PASS / 0 FAIL (45 total)`. If anything fails, do not procee
 ├── .env.example                     ← secrets template (committed; copy to .env locally)
 ├── .env                             ← your local secrets (gitignored, never committed)
 ├── code/
-│   ├── tokenizer_audit.py           ← Phase 1 utility
+│   ├── _logging.py                  ← shared logging (used by Phase 1 + downstream)
+│   ├── build_dataset.py             ← Phase 1 — canonical 10K-pair (a,b,s) dataset + matched-permutation features
+│   ├── tokenizer_audit.py           ← Phase 1 utility (strict-primary + relaxed-Llama; FakeTokenizer self-test in __main__)
+│   ├── test_tokenizers.py           ← Phase 1 — comprehensive per-integer tokenization test (199 ints × 3 models)
+│   ├── run_phase1_audit.py          ← Phase 1 driver (auto-fallback Llama if gate fails)
 │   ├── accuracy_check.py            ← Phase 2 utility
-│   ├── run_phase1_audit.py          ← Phase 1 runner
 │   └── run_phase2_accuracy.py       ← Phase 2 runner (--model arg)
 ├── scripts/
-│   ├── phase1_audit.sh              ← Phase 1 wrapper (CPU, login node)
 │   └── phase2_accuracy.sbatch       ← Phase 2 SLURM job (A100; takes model key)
 └── toy/
     ├── README.md                    ← toy walkthrough (45 / 45 PASS)
@@ -132,7 +143,7 @@ Expected output: `45 PASS / 0 FAIL (45 total)`. If anything fails, do not procee
 
 - **Real-model runs.** **CMU Babel** cluster via VS Code Remote-SSH. A100 80 GB for activation extraction (Phase 3) and causal interventions (Phase 6); CPU nodes for tokenizer audit (Phase 1), REG diagnostics (Phase 4a), manifold fitting (Phase 4b), test statistics + localization (Phase 5a/5b), and figures (Phase 7). Phase 2 (accuracy reproduction) runs on A100 in parallel with Phase 3. Budget: ~24 GPU-hours total across the 8 phases (3 of them GPU-heavy, 5 of them CPU).
 - **Toy runs.** Any Python 3.10+ environment with `numpy`, `scipy`, `scikit-learn`, `matplotlib`, `torch`, `pandas`. CPU is sufficient. ~4 minutes wall clock.
-- **Persistent storage.** Babel scratch at `/data/user_data/$USER/blackbox/` (set as `$BLACKBOX_DATA`). Conda env at `/data/user_data/$USER/envs/blackbox/`. See [SETUP.md](SETUP.md) for the full path table and the reasons (`$HOME` quota, no conda env in home).
+- **Persistent storage.** Babel scratch at `/data/user_data/$USER/blackbox/` (set as `$BLACKBOX_DATA`); 11 subdirs total — the 9 from the babel-execution-plan tree plus `hf_cache/` (`HF_HOME`) and `dataset/` (canonical 10K-pair ground truth, added in Phase 1). Conda env at `/data/user_data/$USER/envs/blackbox/`. See [SETUP.md](SETUP.md) for the full path table and the reasons (`$HOME` quota, no conda env in home).
 
 ---
 

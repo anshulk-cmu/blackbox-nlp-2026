@@ -1,145 +1,64 @@
+"""Phase 1 utility: strict tokenizer audit per the project spec.
+
+Strict primary protocol from full_paper_plan.md §3.1:1551-1554 +
+§3.2:1587-1605: a pair (a, b) ∈ {0,…,99}² is retained for a model
+iff str(a), str(b), and str(a+b) each tokenize to a single token.
+The relaxed Llama-only fallback (operands single-token, allow multi-
+token answer, predict on the first answer token) is documented at
+babel_execution_plan.md §4:340-348 and is invoked from
+run_phase1_audit.py only when the strict gate fails with Llama as
+the bottleneck.
+
+Public API:
+  - PROMPT_TEMPLATES (full_paper_plan.md §3.1:1542-1548, KT-faithful)
+  - audit_tokenizer_strict(tokenizer, model_key, hf_repo) -> dict
+  - audit_tokenizer_relaxed_llama(tokenizer, model_key, hf_repo) -> dict
+  - intersect_audits(audits) -> List[Dict]   (pairs with per-model token ids)
+  - save_audit, save_intersection, summary_report
+
+The module's __main__ runs a FakeTokenizer self-test that exercises
+the audit machinery without any HF download.
 """
-Tokenizer audit utility (Phase 1 of babel_execution_plan.md).
-
-For each (a, b) in {0..99}^2, determines whether:
-  - Operand a is single-token (with and without leading space).
-  - Operand b is single-token.
-  - Answer s = a + b is single-token.
-
-Per full_paper_plan.md §3.2: we restrict primary analysis to (a, b) pairs
-where both inputs and the answer tokenize as single tokens in the model's
-tokenizer.
-
-This module exposes:
-  - PROMPT_TEMPLATES: per-model prompt strings (matching KT 2025 Table 2).
-  - audit_tokenizer(tokenizer, model_key) -> dict with retained mask + reasons.
-  - intersect_audits(audits) -> set of (a, b) retained by all input audits.
-
-The notebook 01_tokenizer_audit.ipynb wraps these functions; the same code
-is reusable on a laptop CPU for testing without Colab.
-"""
-
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 import json
 
-
-# Per-model prompt templates from full_paper_plan.md §3.1 (KT-faithful).
+# Per full_paper_plan.md §3.1:1542-1548 (KT-faithful, KT Table 2).
 PROMPT_TEMPLATES: Dict[str, str] = {
-    "gpt-j-6b":     "Output ONLY a number. {a}+{b}=",
-    "pythia-6.9b":  "Output ONLY a number. {a}+{b}=",
+    "gpt-j-6b": "Output ONLY a number. {a}+{b}=",
+    "pythia-6.9b": "Output ONLY a number. {a}+{b}=",
     "llama-3.1-8b": "The following is a correct addition problem.\n{a}+{b}=",
 }
 
-OPERAND_RANGE = range(0, 100)     # 0..99 inclusive
-ANSWER_RANGE = range(0, 199)      # 0..198 inclusive
+OPERAND_RANGE = range(0, 100)   # 0..99 inclusive (full_paper_plan.md §3.2)
+ANSWER_RANGE = range(0, 199)    # 0..198 inclusive (paper_math.md §1.1)
 
 
 def _is_single_token(tokenizer, text: str) -> bool:
-    """Return True iff `text` tokenizes to a single token (no specials)."""
+    return len(tokenizer.encode(text, add_special_tokens=False)) == 1
+
+
+def _first_token(tokenizer, text: str) -> Tuple[Optional[int], str]:
     ids = tokenizer.encode(text, add_special_tokens=False)
-    return len(ids) == 1
+    if not ids:
+        return (None, "")
+    first_id = int(ids[0])
+    return (first_id, tokenizer.decode([first_id]))
 
 
-def _audit_pair_in_prompt(tokenizer, template: str, a: int, b: int):
-    """Tokenize the actual prompt for (a, b) and find operand positions.
-
-    Returns dict with keys:
-      a_idx, b_idx: indices of operand tokens in the prompt tokenization,
-                    or None if operand is not a single contiguous token.
-                    For multi-token operands (Llama 3 splits "42" into
-                    ['4','2']), this is None and we accept that — Phase 3
-                    extracts at the '=' token, NOT at operand positions.
-      first_answer_token_id: int, the token id the model would need to
-                             predict at the '=' position to be "correct"
-                             on the FIRST token of the answer string.
-                             For single-token answers (GPT-J/Pythia) this
-                             IS the answer. For multi-token (Llama 3.1) it
-                             is the first character of str(s).
-      first_answer_token_str: the decoded form of that token (for sanity).
-      s_is_single_token: True if str(s) tokenizes to one token.
-      reasons: empty unless something is structurally broken with the prompt.
-
-    The audit's `ok` flag is now: "the prompt tokenizes without error AND
-    the first answer token is well-defined". This retains all (a, b) on
-    Llama where the previous strict check dropped everything.
-    """
-    prompt = template.format(a=a, b=b)
-    ids = tokenizer.encode(prompt, add_special_tokens=False)
-    decoded = [tokenizer.decode([i]) for i in ids]
-
-    a_str = str(a)
-    b_str = str(b)
-
-    # Locate operand a: first token whose stripped decode equals str(a). May be None.
-    a_idx = None
-    for i, t in enumerate(decoded):
-        if t.strip() == a_str:
-            a_idx = i
-            break
-
-    b_idx = None
-    if a_idx is not None:
-        for i in range(a_idx + 1, len(decoded)):
-            if decoded[i].strip() == b_str:
-                b_idx = i
-                break
-
-    # First token the model needs to predict at '=' for a 'correct' answer.
-    s = a + b
-    answer_ids = tokenizer.encode(str(s), add_special_tokens=False)
-    s_is_single = len(answer_ids) == 1
-    first_answer_token_id = int(answer_ids[0]) if answer_ids else None
-    first_answer_token_str = tokenizer.decode([first_answer_token_id]) if answer_ids else ""
-
-    reasons = []
-    if not answer_ids:
-        reasons.append(f"answer_s={s}_empty_tokenization")
-
-    return {
-        "a_idx": a_idx,
-        "b_idx": b_idx,
-        "first_answer_token_id": first_answer_token_id,
-        "first_answer_token_str": first_answer_token_str,
-        "s_is_single_token": s_is_single,
-        "reasons": reasons,
-        "ok": not reasons,
-    }
-
-
-def audit_tokenizer(tokenizer, model_key: str) -> Dict:
-    """Run the audit for one tokenizer using prompt-context checks.
-
-    Retention rule (post-fix for Llama 3.1):
-      A pair (a, b) is retained if the prompt tokenizes without error and
-      the answer's first token is well-defined. We do NOT require the
-      operand or full answer to be single-token, because:
-        - For Phase 3 activation extraction, we extract at the '=' token.
-        - For Phase 2 accuracy reproduction, single-token answers use
-          1-step argmax; multi-token answers use generate(max_new_tokens).
-      The diagnostic fields `operand_ok` (bare-string single-token check)
-      and `s_is_single_token` are recorded per-pair so Phase 2 can route
-      the right decoding strategy per model.
-
-    Returns dict with:
-      'model':              model_key
-      'prompt_template':    the template used
-      'retained':           list of {a, b, s, a_idx, b_idx,
-                                     first_answer_token_id,
-                                     first_answer_token_str,
-                                     s_is_single_token} dicts
-      'dropped':            list of {a, b, s, reasons} dicts
-      'n_retained':         int
-      'n_dropped':          int
-      'all_answers_single_token': bool (True for GPT-J/Pythia, False for Llama)
-      'operand_ok':         dict str(n) -> bool, diagnostic only
-      'answer_ok':          dict str(s) -> bool, diagnostic only
-    """
-    template = PROMPT_TEMPLATES[model_key]
-
-    operand_bare_ok = {n: _is_single_token(tokenizer, str(n)) for n in OPERAND_RANGE}
+def _per_integer_single_token(tokenizer) -> Tuple[Dict[int, bool], Dict[int, bool]]:
+    operand_ok = {n: _is_single_token(tokenizer, str(n)) for n in OPERAND_RANGE}
     answer_ok = {s: _is_single_token(tokenizer, str(s)) for s in ANSWER_RANGE}
+    return operand_ok, answer_ok
+
+
+def audit_tokenizer_strict(tokenizer, model_key: str, hf_repo: str) -> Dict:
+    """Strict primary protocol per full_paper_plan.md §3.1/§3.2.
+
+    Retain (a, b) iff str(a), str(b), str(a+b) are each length-1 tokens.
+    """
+    operand_ok, answer_ok = _per_integer_single_token(tokenizer)
 
     retained: List[Dict] = []
     dropped: List[Dict] = []
@@ -147,91 +66,211 @@ def audit_tokenizer(tokenizer, model_key: str) -> Dict:
     for a in OPERAND_RANGE:
         for b in OPERAND_RANGE:
             s = a + b
-            res = _audit_pair_in_prompt(tokenizer, template, a, b)
-            if res["ok"]:
+            ok_a, ok_b, ok_s = operand_ok[a], operand_ok[b], answer_ok[s]
+            if ok_a and ok_b and ok_s:
+                first_id, first_str = _first_token(tokenizer, str(s))
                 retained.append({
                     "a": a, "b": b, "s": s,
-                    "a_idx": res["a_idx"],
-                    "b_idx": res["b_idx"],
-                    "first_answer_token_id": res["first_answer_token_id"],
-                    "first_answer_token_str": res["first_answer_token_str"],
-                    "s_is_single_token": res["s_is_single_token"],
+                    "ok_a": True, "ok_b": True, "ok_s": True,
+                    "first_answer_token_id": first_id,
+                    "first_answer_token_str": first_str,
                 })
             else:
-                dropped.append({"a": a, "b": b, "s": s, "reasons": res["reasons"]})
+                reason_parts = []
+                if not ok_a:
+                    reason_parts.append(f"operand_a={a}_multi")
+                if not ok_b:
+                    reason_parts.append(f"operand_b={b}_multi")
+                if not ok_s:
+                    reason_parts.append(f"answer_s={s}_multi")
+                dropped.append({
+                    "a": a, "b": b, "s": s,
+                    "ok_a": ok_a, "ok_b": ok_b, "ok_s": ok_s,
+                    "reason": ",".join(reason_parts),
+                })
 
-    all_single = all(answer_ok.values())
+    return _build_audit_dict(
+        tokenizer, model_key, hf_repo, retained, dropped,
+        operand_ok, answer_ok, policy="strict",
+    )
 
+
+def audit_tokenizer_relaxed_llama(tokenizer, model_key: str, hf_repo: str) -> Dict:
+    """Llama-only relaxed fallback per babel_execution_plan.md §4:340-348.
+
+    Operand must be single-token; answer is allowed to be multi-token.
+    Use the FIRST answer token for prediction (model emits one token in
+    one greedy step at the '=' position).
+    """
+    operand_ok, answer_ok = _per_integer_single_token(tokenizer)
+
+    retained: List[Dict] = []
+    dropped: List[Dict] = []
+
+    for a in OPERAND_RANGE:
+        for b in OPERAND_RANGE:
+            s = a + b
+            ok_a, ok_b = operand_ok[a], operand_ok[b]
+            if not (ok_a and ok_b):
+                reason_parts = []
+                if not ok_a:
+                    reason_parts.append(f"operand_a={a}_multi")
+                if not ok_b:
+                    reason_parts.append(f"operand_b={b}_multi")
+                dropped.append({
+                    "a": a, "b": b, "s": s,
+                    "ok_a": ok_a, "ok_b": ok_b, "ok_s": answer_ok[s],
+                    "reason": ",".join(reason_parts),
+                })
+                continue
+
+            first_id, first_str = _first_token(tokenizer, str(s))
+            if first_id is None:
+                dropped.append({
+                    "a": a, "b": b, "s": s,
+                    "ok_a": ok_a, "ok_b": ok_b, "ok_s": False,
+                    "reason": "answer_empty_tokenization",
+                })
+                continue
+
+            retained.append({
+                "a": a, "b": b, "s": s,
+                "ok_a": True, "ok_b": True, "ok_s": answer_ok[s],
+                "first_answer_token_id": first_id,
+                "first_answer_token_str": first_str,
+            })
+
+    return _build_audit_dict(
+        tokenizer, model_key, hf_repo, retained, dropped,
+        operand_ok, answer_ok, policy="relaxed_llama",
+    )
+
+
+def _build_audit_dict(
+    tokenizer, model_key: str, hf_repo: str,
+    retained: List[Dict], dropped: List[Dict],
+    operand_ok: Dict[int, bool], answer_ok: Dict[int, bool],
+    policy: str,
+) -> Dict:
     return {
         "model": model_key,
-        "prompt_template": template,
-        "retained": retained,
-        "dropped": dropped,
+        "hf_repo": hf_repo,
+        "prompt_template": PROMPT_TEMPLATES[model_key],
+        "tokenizer_class": tokenizer.__class__.__name__,
+        "vocab_size": int(getattr(tokenizer, "vocab_size", -1)),
         "n_retained": len(retained),
         "n_dropped": len(dropped),
-        "all_answers_single_token": all_single,
-        "operand_ok": {str(k): bool(v) for k, v in operand_bare_ok.items()},
-        "answer_ok": {str(k): bool(v) for k, v in answer_ok.items()},
+        "all_answers_single_token": all(answer_ok.values()),
+        "operand_single_token": {str(n): bool(v) for n, v in operand_ok.items()},
+        "answer_single_token": {str(s): bool(v) for s, v in answer_ok.items()},
+        "operand_multi_token_list": sorted([n for n, v in operand_ok.items() if not v]),
+        "answer_multi_token_list": sorted([s for s, v in answer_ok.items() if not v]),
+        "retained": retained,
+        "dropped": dropped,
+        "policy": policy,
     }
 
 
 def intersect_audits(audits: List[Dict]) -> List[Dict]:
-    """Return the list of {a, b, s} retained by every audit in `audits`."""
+    """Three-way intersection joined by (a, b).
+
+    Each output pair carries `first_answer_token_id_per_model` so Phase 2
+    needs no cross-file join.
+    """
     if not audits:
         return []
-    common = set((p["a"], p["b"]) for p in audits[0]["retained"])
-    for au in audits[1:]:
-        common &= set((p["a"], p["b"]) for p in au["retained"])
-    return [{"a": a, "b": b, "s": a + b} for (a, b) in sorted(common)]
+
+    sets = [set((p["a"], p["b"]) for p in au["retained"]) for au in audits]
+    common = sets[0].intersection(*sets[1:])
+
+    by_model: Dict[str, Dict[Tuple[int, int], Dict]] = {
+        au["model"]: {(p["a"], p["b"]): p for p in au["retained"]}
+        for au in audits
+    }
+    by_model_str: Dict[str, Dict[Tuple[int, int], Dict]] = {
+        au["model"]: {(p["a"], p["b"]): p for p in au["retained"]}
+        for au in audits
+    }
+
+    out: List[Dict] = []
+    for (a, b) in sorted(common):
+        s = a + b
+        first_ids = {
+            m: by_model[m][(a, b)]["first_answer_token_id"] for m in by_model
+        }
+        first_strs = {
+            m: by_model_str[m][(a, b)]["first_answer_token_str"]
+            for m in by_model_str
+        }
+        out.append({
+            "a": a, "b": b, "s": s,
+            "first_answer_token_id_per_model": first_ids,
+            "first_answer_token_str_per_model": first_strs,
+        })
+    return out
 
 
 def save_audit(audit: Dict, path: str) -> None:
-    """Save an audit dict to a JSON file."""
     with open(path, "w") as f:
         json.dump(audit, f, indent=2)
 
 
-def save_intersection(intersection: List[Dict], audits: List[Dict], path: str) -> None:
-    """Save the three-way intersection plus per-model retained counts."""
+def save_intersection(
+    pairs: List[Dict],
+    audits: List[Dict],
+    path: str,
+    gate_threshold: int,
+    llama_relaxed_used: bool,
+) -> None:
+    n = len(pairs)
     data = {
-        "n_intersection": len(intersection),
+        "n_intersection": n,
         "per_model_retained": {a["model"]: a["n_retained"] for a in audits},
-        "pairs": intersection,
+        "per_model_policy": {a["model"]: a["policy"] for a in audits},
+        "gate_threshold": gate_threshold,
+        "gate_passed": n >= gate_threshold,
+        "llama_relaxed_fallback_used": llama_relaxed_used,
+        "pairs": pairs,
     }
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
 
-def summary_report(audits: List[Dict], intersection: List[Dict]) -> str:
-    """Multi-line text summary suitable for printing in the notebook."""
+def summary_report(
+    audits: List[Dict], n_intersection: int, gate_threshold: int,
+) -> str:
     lines = ["Tokenizer audit summary:"]
-    for a in audits:
+    for au in audits:
+        pct = 100.0 * au["n_retained"] / 10000.0
         lines.append(
-            f"  {a['model']:14s}: {a['n_retained']:5d} / 10000 retained "
-            f"({100.0 * a['n_retained'] / 10000.0:.1f}%)"
+            f"  {au['model']:14s} ({au['policy']:14s}): "
+            f"{au['n_retained']:5d} / 10000 ({pct:5.1f}%)  "
+            f"all_ans_single={str(au['all_answers_single_token']):5s}  "
+            f"|operand_multi|={len(au['operand_multi_token_list']):3d}  "
+            f"|answer_multi|={len(au['answer_multi_token_list']):3d}"
         )
-    n_int = len(intersection)
+    pct_int = 100.0 * n_intersection / 10000.0
+    gate_str = "PASS" if n_intersection >= gate_threshold else "FAIL"
     lines.append(
-        f"  {'INTERSECTION':14s}: {n_int:5d} / 10000 retained by all "
-        f"({100.0 * n_int / 10000.0:.1f}%)"
+        f"  {'INTERSECTION':14s}: {n_intersection:5d} / 10000 "
+        f"({pct_int:5.1f}%)  gate(>={gate_threshold})={gate_str}"
     )
     return "\n".join(lines)
 
 
+# ----------------------------------------------------------------------
+# FakeTokenizer self-test (no HF download).
+# ----------------------------------------------------------------------
 if __name__ == "__main__":
-    # Local self-test that does NOT require any HuggingFace download.
-    # Builds a fake tokenizer that maps every short integer (0..200) to one
-    # token and sanity-checks the audit machinery.
+    import re
 
     class FakeTokenizer:
-        """Tokenizer where every integer 0..200 is a single token equal to its value,
-        and the prompt template tokens are individual integer ids."""
+        """Every integer 0..200 maps to a single token equal to its value."""
+        vocab_size = 1000
+
         def encode(self, text, add_special_tokens=False):
-            # Tokenize a prompt by splitting on word boundaries; each integer
-            # 0..200 becomes a single token.
-            import re
-            ids = []
-            for piece in re.findall(r'\d+|\D+', text):
+            ids: List[int] = []
+            for piece in re.findall(r"\d+|\D+", text):
                 if piece.isdigit():
                     n = int(piece)
                     if 0 <= n <= 200:
@@ -239,30 +278,33 @@ if __name__ == "__main__":
                     else:
                         ids.extend([99, 100])
                 else:
-                    # Map non-digit chunks to a fixed dummy id (200 + len).
                     ids.append(500)
             return ids
+
         def decode(self, ids):
-            # Reverse: integer-valued tokens decode to str(n); dummy decodes to "<x>".
             parts = []
             for i in ids:
                 if 0 <= i <= 200:
                     parts.append(str(i))
                 else:
                     parts.append("<x>")
-            return ''.join(parts)
+            return "".join(parts)
 
-    tok = FakeTokenizer()
-    audit = audit_tokenizer(tok, "gpt-j-6b")
-    print(summary_report([audit], []))
-    assert audit["n_retained"] == 10000, "fake tokenizer should retain all"
+    tok_ok = FakeTokenizer()
+    audit_ok = audit_tokenizer_strict(tok_ok, "gpt-j-6b", "fake/ok")
+    assert audit_ok["n_retained"] == 10000, audit_ok["n_retained"]
+    assert audit_ok["n_dropped"] == 0
+    assert audit_ok["all_answers_single_token"] is True
+    assert audit_ok["operand_multi_token_list"] == []
+    assert audit_ok["answer_multi_token_list"] == []
+    assert audit_ok["policy"] == "strict"
+    print("[fake/ok] strict: 10000 retained as expected.")
 
-    # Now break it: pretend "100" tokenizes to two tokens (operand or answer).
     class FakeBroken(FakeTokenizer):
+        """Splits any 100-token into [99, 1] (mimics multi-token answers)."""
         def encode(self, text, add_special_tokens=False):
             ids = super().encode(text, add_special_tokens=add_special_tokens)
-            # Split any 100 token into [99, 1] (multi-token) for this fake.
-            new_ids = []
+            new_ids: List[int] = []
             for i in ids:
                 if i == 100:
                     new_ids.extend([99, 1])
@@ -270,15 +312,44 @@ if __name__ == "__main__":
                     new_ids.append(i)
             return new_ids
 
-    audit2 = audit_tokenizer(FakeBroken(), "pythia-6.9b")
-    intersection = intersect_audits([audit, audit2])
-    print(summary_report([audit, audit2], intersection))
-    # Relaxed audit retains multi-token-answer pairs (Phase 2 handles decoding).
-    # FakeBroken should still tokenize the prompt structurally OK, so retention is full.
-    assert audit2["n_retained"] == 10000, "Relaxed audit should retain all structurally-OK prompts"
-    # But the per-pair s_is_single_token flag should be False for s=100 cases.
-    multi_pairs = [p for p in audit2["retained"] if not p["s_is_single_token"]]
-    assert len(multi_pairs) > 0, "FakeBroken should produce some multi-token answers"
-    assert audit2["all_answers_single_token"] is False
+    tok_broken = FakeBroken()
+    audit_broken = audit_tokenizer_strict(tok_broken, "pythia-6.9b", "fake/broken")
+    assert audit_broken["all_answers_single_token"] is False
+    assert audit_broken["answer_multi_token_list"] == [100]
+    assert audit_broken["operand_multi_token_list"] == []
+    assert audit_broken["n_dropped"] > 0
+    dropped_pairs_with_s_100 = sum(
+        1 for d in audit_broken["dropped"] if d["s"] == 100
+    )
+    assert dropped_pairs_with_s_100 == audit_broken["n_dropped"]
+    print(
+        f"[fake/broken] strict: {audit_broken['n_retained']} retained, "
+        f"{audit_broken['n_dropped']} dropped (all s=100 cases)."
+    )
 
+    inter = intersect_audits([audit_ok, audit_broken])
+    assert len(inter) == audit_broken["n_retained"]
+    sample = inter[0]
+    assert "first_answer_token_id_per_model" in sample
+    assert set(sample["first_answer_token_id_per_model"].keys()) == {
+        "gpt-j-6b", "pythia-6.9b",
+    }
+    print(f"[intersect] {len(inter)} pairs in 2-way intersection.")
+
+    audit_relaxed = audit_tokenizer_relaxed_llama(
+        tok_broken, "llama-3.1-8b", "fake/broken",
+    )
+    assert audit_relaxed["policy"] == "relaxed_llama"
+    assert audit_relaxed["n_retained"] == 10000
+    assert audit_relaxed["n_dropped"] == 0
+    multi_pairs = [
+        p for p in audit_relaxed["retained"] if not p["ok_s"]
+    ]
+    assert len(multi_pairs) > 0
+    print(
+        f"[relaxed_llama] {audit_relaxed['n_retained']} retained "
+        f"({len(multi_pairs)} with multi-token s)."
+    )
+
+    print(summary_report([audit_ok, audit_broken], len(inter), gate_threshold=7000))
     print("OK: tokenizer_audit self-test passed.")
