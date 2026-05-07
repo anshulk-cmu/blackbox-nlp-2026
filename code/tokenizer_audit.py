@@ -1,5 +1,5 @@
 """
-Tokenizer audit utility (Phase 1 of colab_execution_plan.md).
+Tokenizer audit utility (Phase 1 of babel_execution_plan.md).
 
 For each (a, b) in {0..99}^2, determines whether:
   - Operand a is single-token (with and without leading space).

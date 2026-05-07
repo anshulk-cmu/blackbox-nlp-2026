@@ -1,20 +1,26 @@
 """
-Synthetic-toy runner for the entire paper pipeline (E1-E8).
+Synthetic-toy runner for the entire paper pipeline (E1-E16).
 
-Each experiment maps to a section of the paper plan. Pass/fail criteria are
-pre-registered in C:\\Users\\worka\\.claude\\plans\\lets-look-at-the-sparkling-hellman.md
-and reproduced inline below.
+Each experiment maps to a section of the paper plan / paper_math.md.
+Pass/fail criteria are reproduced inline below.
 
-Run:
-    C:\\Users\\worka\\anaconda3\\envs\\privacy\\python.exe toy\\run_toy.py
+Default run (matches the validated 45/45 PASS baseline):
+    python toy/run_toy.py
 
-Outputs land in toy/outputs/.
+Larger configuration (d_m bumped, useful as an end-to-end smoke test
+after env / GPU node setup; defaults still PASS but at slower wall time):
+    python toy/run_toy.py --big --log-dir "$BLACKBOX_DATA/logs"
+
+Logging: writes to stdout AND to a timestamped file under --log-dir
+(default toy/outputs/).
 """
 
 from __future__ import annotations
 
+import argparse
 import gc
 import json
+import logging
 import os
 import sys
 import time
@@ -28,6 +34,61 @@ import numpy as np
 
 # Force unbuffered stdout so progress is visible in real time
 sys.stdout.reconfigure(line_buffering=True)
+
+
+# ---------------------------------------------------------------------------
+# Logging setup. Configured by configure_logging() at startup; safe defaults
+# are installed at import time so module-level prints/log calls don't crash.
+# ---------------------------------------------------------------------------
+
+logger = logging.getLogger("toy")
+logger.setLevel(logging.INFO)
+logger.addHandler(logging.NullHandler())
+LOG_FILE_PATH: Optional[str] = None
+
+
+def configure_logging(log_dir: str) -> str:
+    """Set up stdout + file handlers on the 'toy' logger.
+
+    Returns the log file path. Call once at start of main().
+    """
+    global LOG_FILE_PATH
+    os.makedirs(log_dir, exist_ok=True)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    LOG_FILE_PATH = os.path.join(log_dir, f"toy_run_{ts}.log")
+
+    fmt = logging.Formatter(
+        fmt="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    # Drop the NullHandler installed at import time
+    logger.handlers = []
+
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setFormatter(fmt)
+    logger.addHandler(sh)
+
+    fh = logging.FileHandler(LOG_FILE_PATH, mode="w")
+    fh.setFormatter(fmt)
+    logger.addHandler(fh)
+
+    logger.propagate = False
+    return LOG_FILE_PATH
+
+
+# Shim: route legacy print() in this module through the logger.
+# This keeps existing record()/divider()/per-experiment print sites unchanged
+# while ensuring everything lands in the log file too.
+def print(*args, **kwargs):  # noqa: A001 (intentional shadow)
+    sep = kwargs.get("sep", " ")
+    msg = sep.join(str(a) for a in args)
+    if msg == "":
+        # Treat blank prints as a single empty log line for readability
+        logger.info("")
+    else:
+        for line in msg.splitlines():
+            logger.info(line)
 
 from synth_world import (
     make_world, helix, basis_vector, logit_difference,
@@ -1097,44 +1158,138 @@ def E16_berry_esseen(d_m: int = 256, sigma: float = 0.1) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
-def main():
-    t0 = time.time()
-    print("Synthetic toy: end-to-end paper pipeline")
-    print(f"Output dir: {OUTPUT_DIR}")
-    print(f"Seed: {SEED}")
+def gpu_smoke_test() -> dict:
+    """Verify torch + CUDA actually work on this node by running a real matmul.
 
-    E1_theorem1_validity()
-    E2_theorem2_power()
-    E3_manifold_recovery()
-    E4_failure_modes()
-    E5_cross_fit()
-    E6_matched_permutation()
-    E7_localization()
-    E8_causal()
+    The toy itself is numpy-based and runs on CPU; this smoke test confirms the
+    GPU path the real-model pipeline (Phases 2/3/6) will use is alive.
+    Returns a small dict of facts to log; never raises (logs a warning instead).
+    """
+    info: dict = {"cuda_available": False, "device": "cpu"}
+    try:
+        import torch
+        info["torch_version"] = torch.__version__
+        info["cuda_available"] = bool(torch.cuda.is_available())
+        if info["cuda_available"]:
+            dev = torch.device("cuda:0")
+            info["device"] = torch.cuda.get_device_name(0)
+            info["cuda_capability"] = ".".join(str(x) for x in torch.cuda.get_device_capability(0))
+            # Real op: 2048x2048 fp32 matmul on the device, time it, sanity check the result
+            t = time.time()
+            x = torch.randn((2048, 2048), device=dev)
+            y = x @ x.T
+            torch.cuda.synchronize()
+            info["matmul_ms"] = round((time.time() - t) * 1000.0, 1)
+            info["matmul_ok"] = bool(torch.isfinite(y).all().item())
+            del x, y
+            torch.cuda.empty_cache()
+        else:
+            info["device"] = "CPU only (torch.cuda.is_available() == False)"
+    except Exception as exc:
+        info["error"] = repr(exc)
+        logger.warning("GPU smoke test raised: %r", exc)
+    return info
+
+
+def main():
+    global OUTPUT_DIR
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--log-dir", default=OUTPUT_DIR,
+                        help="Directory for the timestamped log file. "
+                             "Defaults to toy/outputs/.")
+    parser.add_argument("--output-dir", default=OUTPUT_DIR,
+                        help="Directory for results.json and per-experiment "
+                             "PNG/CSV artifacts. Defaults to toy/outputs/.")
+    parser.add_argument("--big", action="store_true",
+                        help="Use a larger d_m configuration (2x on every "
+                             "experiment). Slower but exercises bigger linalg. "
+                             "Defaults are unchanged when --big is not set.")
+    parser.add_argument("--d-m", type=int, default=None,
+                        help="Override d_m for the d_m=256 experiments. If "
+                             "given, takes precedence over --big.")
+    args = parser.parse_args()
+
+    # Logging first, so every subsequent log() lands in both stdout + file
+    log_path = configure_logging(args.log_dir)
+
+    # Re-target output artifacts (PNG/CSV/JSON). The module-level OUTPUT_DIR is
+    # captured by closures in the experiment functions, so reassign it here.
+    OUTPUT_DIR = args.output_dir
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    t0 = time.time()
+    logger.info("=" * 80)
+    logger.info("Synthetic toy: end-to-end paper pipeline")
+    logger.info("=" * 80)
+    logger.info("host:        %s", os.uname().nodename)
+    logger.info("user:        %s", os.environ.get("USER", "unknown"))
+    logger.info("python:      %s", sys.version.replace("\n", " "))
+    logger.info("numpy:       %s", np.__version__)
+    logger.info("seed:        %d", SEED)
+    logger.info("output dir:  %s", OUTPUT_DIR)
+    logger.info("log file:    %s", log_path)
+
+    # Decide d_m per experiment family.
+    # d_m_main applies to E1/E2/E3/E4/E7/E8/E9/E11/E12/E15/E16 (default 256)
+    # d_m_small applies to E5/E6/E10/E13 (default 64)
+    # d_m_mid applies to E14 (default 128)
+    if args.d_m is not None:
+        d_m_main = args.d_m
+        d_m_small = max(args.d_m // 4, 32)
+        d_m_mid = max(args.d_m // 2, 64)
+        logger.info("config:      --d-m=%d (overrides --big)", args.d_m)
+    elif args.big:
+        d_m_main, d_m_small, d_m_mid = 512, 128, 256
+        logger.info("config:      --big (d_m_main=%d, d_m_small=%d, d_m_mid=%d)",
+                    d_m_main, d_m_small, d_m_mid)
+    else:
+        d_m_main, d_m_small, d_m_mid = 256, 64, 128
+        logger.info("config:      defaults (d_m_main=%d, d_m_small=%d, d_m_mid=%d)",
+                    d_m_main, d_m_small, d_m_mid)
+
+    logger.info("-" * 80)
+    logger.info("GPU smoke test")
+    logger.info("-" * 80)
+    gpu_info = gpu_smoke_test()
+    for k, v in gpu_info.items():
+        logger.info("  %-18s = %s", k, v)
+    logger.info("-" * 80)
+
+    E1_theorem1_validity(d_m=d_m_main)
+    E2_theorem2_power(d_m=d_m_main)
+    E3_manifold_recovery(d_m=d_m_main)
+    E4_failure_modes(d_m=d_m_main)
+    E5_cross_fit(d_m=d_m_small)
+    E6_matched_permutation(d_m=d_m_small)
+    E7_localization(d_m=d_m_main)
+    E8_causal(d_m=d_m_main)
 
     # New experiments aligned with paper_math.md
-    E9_sharp_laurent_massart()
-    E10_le_cam_chi2()
-    E11_exact_null_distribution()
-    E12_misspecification()
-    E13_influence_function_variance()
-    E14_hessian_taylor_remainder()
-    E15_anisotropic_effective_rank()
-    E16_berry_esseen()
+    E9_sharp_laurent_massart(d_m=d_m_main)
+    E10_le_cam_chi2(d_m=d_m_small)
+    E11_exact_null_distribution(d_m=d_m_main)
+    E12_misspecification(d_m=d_m_main)
+    E13_influence_function_variance(d_m=d_m_small)
+    E14_hessian_taylor_remainder(d_m=d_m_mid)
+    E15_anisotropic_effective_rank(d_m=d_m_main)
+    E16_berry_esseen(d_m=d_m_main)
 
     divider("SUMMARY")
     n_pass = sum(r.passed for r in RESULTS)
     n_fail = sum(not r.passed for r in RESULTS)
-    print(f"  {n_pass} PASS / {n_fail} FAIL  ({len(RESULTS)} total)")
+    logger.info("  %d PASS / %d FAIL  (%d total)", n_pass, n_fail, len(RESULTS))
 
     if n_fail > 0:
-        print("\n  FAILED:")
+        logger.info("")
+        logger.info("  FAILED:")
         for r in RESULTS:
             if not r.passed:
-                print(f"    {r.line()}")
+                logger.info("    %s", r.line())
 
     elapsed = time.time() - t0
-    print(f"\n  Elapsed: {elapsed:.1f}s")
+    logger.info("")
+    logger.info("  Elapsed: %.1fs", elapsed)
 
     # Dump JSON (cast numpy scalars to Python types so json can serialise)
     def cast(x):
@@ -1149,6 +1304,14 @@ def main():
             "n_pass": int(n_pass),
             "n_fail": int(n_fail),
             "elapsed_s": float(elapsed),
+            "config": {
+                "d_m_main": d_m_main,
+                "d_m_small": d_m_small,
+                "d_m_mid": d_m_mid,
+                "big": bool(args.big),
+            },
+            "gpu": gpu_info,
+            "log_file": log_path,
             "results": [
                 {
                     "name": r.name, "metric": r.metric, "value": cast(r.value),
@@ -1158,7 +1321,8 @@ def main():
                 for r in RESULTS
             ],
         }, f, indent=2)
-    print(f"  JSON saved to {json_path}")
+    logger.info("  JSON saved to %s", json_path)
+    logger.info("  Log saved to  %s", log_path)
 
 
 if __name__ == "__main__":

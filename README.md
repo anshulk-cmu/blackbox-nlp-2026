@@ -16,6 +16,7 @@
 | [full_paper_plan.md](full_paper_plan.md) | End-to-end methodology: pre-registration, 4-way data split, four ACE interventions, layer selection, five-method comparison, reviewer-defense matrix. |
 | [babel_execution_plan.md](babel_execution_plan.md) | Step-by-step Babel execution plan: SLURM scripts, conda env, VS Code Remote-SSH workflow, resume logic, 7 phases (~24 GPU-hours total). |
 | [SETUP.md](SETUP.md) | Babel filesystem layout: where the conda env, package cache, and run outputs live on the data drive (so nothing large lands in `$HOME`); per-session activation snippet. |
+| [STATUS.md](STATUS.md) | Project state snapshot — what's installed, verified, and outstanding on this Babel account right now. Updated by hand at the end of each session. |
 | [environment.yml](environment.yml) | Pinned conda environment (`conda env create -f environment.yml`). |
 | [toy/](toy/) | Synthetic-toy validation suite. **45 / 45 PASS in 245s on CPU.** Math verified before any GPU spend. |
 | [code/](code/) | Importable utilities (`tokenizer_audit.py`, `accuracy_check.py`) + per-phase runners (`run_phase{1..7}_*.py`). |
@@ -87,6 +88,7 @@ Expected output: `45 PASS / 0 FAIL (45 total)`. If anything fails, do not procee
 .
 ├── README.md                        ← you are here
 ├── SETUP.md                         ← Babel filesystem layout (env + data on /data/user_data)
+├── STATUS.md                        ← project-state snapshot (what's installed / verified / outstanding)
 ├── KT_paper.md                      ← reference paper
 ├── paper_math.md                    ← math
 ├── full_paper_plan.md               ← methodology

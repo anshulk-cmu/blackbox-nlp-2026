@@ -81,8 +81,9 @@ Last verified on `babel-s9-16` (RTX A6000): Python 3.11.15, numpy 1.26.4, torch 
 After activation, all `code/` and `scripts/` entry points work as documented in [babel_execution_plan.md](babel_execution_plan.md). Quick references:
 
 ```bash
-# Sanity check (no GPU; ~4 min on CPU)
-python toy/run_toy.py                       # expect: 45 PASS / 0 FAIL
+# Sanity check (no GPU needed; ~4 min on CPU at default d_m=256, ~10 min at --big)
+python toy/run_toy.py                                          # 45 PASS / 0 FAIL
+python toy/run_toy.py --big --log-dir "$BLACKBOX_DATA/logs"    # 42 PASS / 3 FAIL — expected; see below
 
 # Phase 1 — tokenizer audit (login node, CPU, ~5 min)
 bash scripts/phase1_audit.sh
@@ -94,6 +95,8 @@ sbatch scripts/phase2_accuracy.sbatch llama-3.1-8b
 ```
 
 The phase scripts read `$BLACKBOX_DATA` if it's set; otherwise they fall back to the literal default `/data/user_data/$USER/blackbox`. Either way the outputs land in the right place.
+
+**On the `--big` 42 / 45 PASS result.** Three of the toy's 45 tolerances (E1.null, E3.parametric@2000, E13.V_inf_null) are calibrated for the default `d_m=256` and don't k-scale, so doubling `d_m` to 512 tips them over. This is a property of the chi-squared null variance `2 k σ⁴` growing with `k = d_m - dim(M)`, not a code bug. The full diagnosis and the two ways to make it 45 / 45 at `d_m=512` (grow `n_pairs` or scale tolerances by `√k`) are in [toy/README.md §10.8](toy/README.md). Use `--big` as a stress-test for the linalg + I/O pipeline, not as a re-validation of the math.
 
 ---
 

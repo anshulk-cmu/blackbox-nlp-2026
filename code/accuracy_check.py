@@ -1,5 +1,5 @@
 """
-Accuracy reproduction utility (Phase 2 of colab_execution_plan.md).
+Accuracy reproduction utility (Phase 2 of babel_execution_plan.md).
 
 For each (a, b) in the tokenizer-audit intersection, prompt the model with
 the per-model template (KT 2025 Table 2), greedy-decode one next token, and
@@ -205,7 +205,7 @@ def summary_report(df: pd.DataFrame, model_key: str) -> str:
 
 
 def passes_sanity_gate(df: pd.DataFrame, model_key: str, tolerance_pp: float = 5.0) -> bool:
-    """Pre-registered sanity gate from full_paper_plan.md §3.7 / colab_execution_plan.md §6.
+    """Pre-registered sanity gate from full_paper_plan.md §3.7 / babel_execution_plan.md §5.
 
     Pass iff |empirical accuracy - KT reported| <= tolerance_pp percentage points.
     """

@@ -25,7 +25,13 @@ Taylor remainder (Proposition 9.3), anisotropic effective rank
 mathematical predictions for each of these live in `theorem_predictions.py`,
 and each is a 1-to-1 line in run_toy.py against paper_math.md.
 
-**Last run: 45 PASS / 0 FAIL in 244 seconds (CPU).**
+**Last verified runs (Babel `babel-s9-16`, 2026-05-06):**
+
+- Default config (d_m=256): **45 / 45 PASS in 326 s** (CPU). `toy_run_20260506_214323.log`.
+- `--big` config (d_m=512): **42 / 45 PASS in 564 s** (CPU). 3 expected tolerance-scaling FAILs documented in §10.8. `toy_run_20260506_213304.log`.
+- GPU smoke test (RTX A6000, fp32 2048×2048 matmul): **PASS in 436 ms**. Embedded in both logs and in `results.json["gpu"]`.
+
+The original Windows-laptop reference run was 27/0 in ~205 s and 45/0 in ~244 s after the 2026-05-06 paper_math.md restructure (E9–E16 added).
 
 ---
 
@@ -117,48 +123,53 @@ causal interventions plus Proposition 4 — and prints PASS/FAIL for each.
 
 ### Conda env
 
-The toy runs in the `privacy` conda env on this Windows box. Confirmed
-contents:
+On Babel, the toy runs in the pinned `blackbox` env documented in
+[../SETUP.md](../SETUP.md):
 
+```bash
+conda activate /data/user_data/$USER/envs/blackbox
 ```
-Python 3.11.14
-numpy 2.3.5
-scipy 1.17.0
-matplotlib 3.10.8
-pandas 3.0.0
-seaborn 0.13.2
-scikit-learn 1.8.0
-sympy 1.14.0
-torch 2.10.0+cu128
-torchvision 0.25.0+cu128
-joblib 1.5.3
-tqdm 4.67.3
-```
+
+Pinned versions (matching `environment.yml`): Python 3.11, numpy 1.26.4,
+scipy 1.13.1, scikit-learn 1.5.2, pandas 2.2.2, matplotlib 3.9.2,
+pytorch 2.4.1 + CUDA 12.1, transformers 4.45.0.
 
 The toy uses numpy + scipy + sklearn + matplotlib for the bulk of the work and
 torch.autograd for the Proposition 4 cross-check (so the gradient code path
-matches what the real-model causal pipeline will use).
+matches what the real-model causal pipeline will use). It also runs a
+`torch.cuda` matmul as a startup smoke test, but everything else is CPU.
 
 ### Run command
 
-From the project root:
+From the repo root, with the env activated:
 
-```
-C:\Users\worka\anaconda3\envs\privacy\python.exe -u toy\run_toy.py
+```bash
+# Default (validated baseline; 45 / 45 PASS, ~4 min on a Babel CPU node).
+python toy/run_toy.py
+
+# Same, but log to the data drive instead of toy/outputs/.
+python toy/run_toy.py --log-dir "$BLACKBOX_DATA/logs"
+
+# 2x scale stress test (--big). See §10.8 and §14.5 for the meaning and
+# the expected 42 / 45 PASS at this scale.
+python toy/run_toy.py --big --log-dir "$BLACKBOX_DATA/logs"
 ```
 
-or after `conda activate privacy`:
-
-```
-python -u toy\run_toy.py
-```
-
-The `-u` flag forces unbuffered stdout so progress lines print in real time
-rather than appearing in one block at the end.
+Logging is via the standard `logging` module — both stdout and a
+timestamped file under `--log-dir`. No `-u` needed; the runner sets
+unbuffered line-buffering itself.
 
 ### Expected runtime
 
-About 3–5 minutes on a quad-core laptop CPU. Breakdown of the first clean run:
+About 3–5 minutes on a CPU node at default `d_m`, ~9–10 minutes on the
+same node at `--big`. Recent Babel A6000 measurements:
+
+| Config | d_m_main / small / mid | Wall time | Result |
+|---|---|---|---|
+| default | 256 / 64 / 128 | ~210 s | 45 / 45 PASS |
+| `--big` | 512 / 128 / 256 | ~565 s | 42 / 45 PASS (3 tolerance-scaling FAILs, see §10.8) |
+
+Per-experiment breakdown at default:
 
 | Block | Wall time |
 |---|---|
@@ -170,7 +181,8 @@ About 3–5 minutes on a quad-core laptop CPU. Breakdown of the first clean run:
 | E6 (matched perm, 50 worlds × 200 perms × 2) | ~50 s |
 | E7 (5 V's × 200 perms on 10k-sample world) | ~10 s |
 | E8 (four ACEs + autograd) | ~5 s |
-| **Total** | **~205 s** |
+| **Total (E1–E8)** | **~205 s** |
+| E9–E16 add | ~40 s |
 
 ### Output layout
 
@@ -1614,6 +1626,29 @@ line.
 This was a cosmetic bug but it would have caused confusion for any reviewer
 reading the run log.
 
+### 10.8 Tolerance scaling with `d_m` (a property, not a bug)
+
+**Symptom.** Running `python toy/run_toy.py --big` (d_m_main=512, d_m_small=128, d_m_mid=256) on the Babel A6000 node on 2026-05-06 produced **42 / 45 PASS, 3 FAIL** — vs **45 / 45 PASS** at the default `d_m_main=256`.
+
+The three FAILs at d_m=512:
+
+| Test | Observed | Tolerance | Why it failed |
+|---|---|---|---|
+| `E1.null` | T_n = +0.0430 | 0.030 (= 3σ²) | Null std `≈ √(2 k σ⁴ / n)` grows with `√k`, where `k = d_m - dim(M_S)`. Going k=248 → 504 inflates std by ~√2; with n_pairs=2000 fixed, empirical T_n drifts above the fixed `3σ²` tolerance. |
+| `E3.parametric@2000` | sin θ_max = 0.0600 | 0.055 | Theorem 3's bound `sin θ ∝ √(d_m log d_m / n_c)` grows with √d_m. Empirical 0.041 → 0.060 (~1.45×), tracking theory. |
+| `E13.V_inf_null` | Var(T_cross)/(V_inf/n) = 1.97 | [0.5, 1.7] | `V_inf = 4 k σ⁴` is asymptotic; finite-sample inflation grows with k. At d_m=128 (the --big value for this experiment), the inflation crosses the 1.7 ceiling. |
+
+**Diagnosis.** None of these are code bugs. They are direct consequences of the chi-squared null variance scaling with the residual-bundle dimension `k = d_m - dim(M)`. The tolerances in `run_toy.py` were carefully tuned at the default `d_m=256, d_m=64, d_m=128` configurations and are *fixed constants*, not k-scaled.
+
+**Two mitigations** if you actually need `d_m=512` to PASS:
+
+1. Grow `n_pairs` in lockstep with `d_m` so `k σ⁴ / n` is held constant. For E1.null this means n=4000 instead of 2000.
+2. Scale tolerances by `√(k_new / k_default)`. For E1.null at d_m=512: `0.030 × √(504/248) ≈ 0.043`.
+
+We deliberately did not implement either, because doing so would silently break the validated-baseline guarantee. The 45/45 PASS suite is anchored at the documented defaults; `--big` is a stress-test for the linalg + I/O pipeline (kernel matrices, OLS, eigh on bigger matrices), not a re-validation of the math.
+
+**Lesson for the real run.** When the paper goes to `d_m=4096`, neither tolerances nor `n_pairs` will be the toy's defaults — the real-model phases run 5,000–10,000 samples per population at `d_m=4096`, so `k σ⁴ / n` will be in a different regime. The toy's purpose is to validate the *math* at one consistent calibration. Real-model gates have their own pre-registered thresholds (full_paper_plan.md §6.4).
+
 ---
 
 ## 11. How to interpret the artifacts in `outputs/`
@@ -1792,18 +1827,53 @@ the intervention specifies (a) which subspace it operates on, (b) which
 population it applies to (correct vs wrong), and (c) the sign convention for
 the LD shift.
 
-### 14.5 Running at d_m = 4096 (the paper's actual scale)
+### 14.5 Running at larger `d_m` (CLI knobs, no code edit needed)
 
-```python
-# In run_toy.py main:
-d_m_target = 4096
-E1_theorem1_validity(d_m=d_m_target, sigma=0.1)
-E3_manifold_recovery(d_m=d_m_target, sigma=0.05)
-# Skip E2/E5/E6/E7/E8 at full scale (too slow).
+`run_toy.py` exposes three flags for scaling without touching the source:
+
+```bash
+# Default — 45 / 45 PASS, ~4 min on CPU. Validated baseline.
+python toy/run_toy.py
+
+# 2x scale (d_m_main=512, d_m_small=128, d_m_mid=256). On Babel A6000,
+# ~9.5 min and 42 / 45 PASS — the 3 FAILs are tolerance-scaling, not code
+# bugs (see §10.8 for the analysis).
+python toy/run_toy.py --big
+
+# Arbitrary scale. d_m_small = max(N // 4, 32); d_m_mid = max(N // 2, 64).
+python toy/run_toy.py --d-m 1024
+
+# Redirect log + JSON output (defaults to toy/outputs/).
+python toy/run_toy.py --big \
+    --log-dir   "$BLACKBOX_DATA/logs" \
+    --output-dir "$BLACKBOX_DATA/toy_outputs"
 ```
 
-Expected runtime: ~10-15 minutes on CPU. The 4096 sweep is gated behind a
-manual flag because it takes 3-4× as long as the d_m=256 default.
+The runner writes a structured `YYYY-MM-DD HH:MM:SS [LEVEL] msg` log via
+the standard `logging` module — to both stdout and a timestamped file
+`toy_run_<TS>.log` under `--log-dir`. The same path is recorded inside
+`results.json` under `"log_file"`.
+
+A startup GPU smoke test (`torch.cuda` matmul) runs unconditionally and
+its findings are logged + persisted to `results.json["gpu"]`. The toy
+itself is numpy / CPU; the smoke test is purely a sanity check that the
+CUDA stack the real-model phases need is alive on whatever node you're
+on.
+
+**Why `--big` doesn't auto-PASS.** The chi-squared null variance is
+`2 k σ⁴` where `k = d_m - dim(M)`. The 45 tolerances were tuned at the
+d_m=256 default and don't scale with `k`, so bumping `d_m` without
+proportionally growing `n_pairs` will tip three of them over (E1.null,
+E3.parametric, E13.V_inf). See §10.8 for the table and the two ways to
+make them PASS at scale.
+
+**Why we don't run the toy at d_m = 4096.** Pairwise distance and
+kernel-matrix experiments (E3, E12) would need O(n² · 4096) bytes
+in flight; at n=2000 that's already ~32 MB per kernel matrix and runtime
+balloons to 30+ min. The toy's job is math validation at one consistent
+calibration, not a stand-in for the real-model phases. The d_m=4096
+target is reached on Babel via the actual GPT-J / Pythia / Llama
+extractions in [babel_execution_plan.md](../babel_execution_plan.md).
 
 ### 14.6 Comparing two runs
 
