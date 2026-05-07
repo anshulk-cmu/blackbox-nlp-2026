@@ -15,6 +15,7 @@
 | [paper_math.md](paper_math.md) | Mathematical proposal (7 theorems, 11 lemmas, 4 propositions/corollaries). Authoritative source for theorem statements and proof outlines. |
 | [full_paper_plan.md](full_paper_plan.md) | End-to-end methodology: pre-registration, 4-way data split, four ACE interventions, layer selection, five-method comparison, reviewer-defense matrix. |
 | [babel_execution_plan.md](babel_execution_plan.md) | Step-by-step Babel execution plan: SLURM scripts, conda env, VS Code Remote-SSH workflow, resume logic, 7 phases (~24 GPU-hours total). |
+| [SETUP.md](SETUP.md) | Babel filesystem layout: where the conda env, package cache, and run outputs live on the data drive (so nothing large lands in `$HOME`); per-session activation snippet. |
 | [environment.yml](environment.yml) | Pinned conda environment (`conda env create -f environment.yml`). |
 | [toy/](toy/) | Synthetic-toy validation suite. **45 / 45 PASS in 245s on CPU.** Math verified before any GPU spend. |
 | [code/](code/) | Importable utilities (`tokenizer_audit.py`, `accuracy_check.py`) + per-phase runners (`run_phase{1..7}_*.py`). |
@@ -40,7 +41,13 @@ Kantamneni and Tegmark 2025 showed GPT-J 6B, Pythia 6.9B, and Llama 3.1 8B encod
 
 **For the executor (Anshul, when starting Babel work):**
 
-1. Verify the [babel_execution_plan.md §3.6 pre-flight checklist](babel_execution_plan.md) (VS Code Remote-SSH connected, conda env built, HF login, `$BLACKBOX_DATA` set).
+0. Open a shell on the Babel node and activate the env per [SETUP.md §3](SETUP.md):
+   ```bash
+   export BLACKBOX_DATA=/data/user_data/$USER/blackbox
+   conda activate /data/user_data/$USER/envs/blackbox
+   ```
+   The env and `$BLACKBOX_DATA` directory tree are already built on this account; SETUP.md documents the paths and the one-time commands that produced them.
+1. Verify the rest of the [babel_execution_plan.md §3.6 pre-flight checklist](babel_execution_plan.md) (VS Code Remote-SSH connected, HF login, Llama 3.1 license).
 2. Run `python toy/run_toy.py` once. Confirm `45 / 45 PASS`.
 3. Run Phase 1 on the login node: `bash scripts/phase1_audit.sh`.
 4. Submit Phase 2 SLURM jobs: `sbatch scripts/phase2_accuracy.sbatch <model_key>` (one per model).
@@ -57,6 +64,7 @@ Kantamneni and Tegmark 2025 showed GPT-J 6B, Pythia 6.9B, and Llama 3.1 8B encod
 - **"What's pre-registered before any data is touched?"** → [full_paper_plan.md §6](full_paper_plan.md).
 - **"What's the four-intervention causal pipeline?"** → [full_paper_plan.md §3.9](full_paper_plan.md), Proposition 9.3.
 - **"What if the experiment doesn't fire?"** → [full_paper_plan.md §7 fallback structure](full_paper_plan.md). Every interpretation step has a publishable null version.
+- **"Where does my conda env / HF cache / activations actually live on Babel?"** → [SETUP.md](SETUP.md). All large artifacts on `/data/user_data/$USER/`; only the repo lives in `$HOME`.
 
 ---
 
@@ -78,6 +86,7 @@ Expected output: `45 PASS / 0 FAIL (45 total)`. If anything fails, do not procee
 ```
 .
 ├── README.md                        ← you are here
+├── SETUP.md                         ← Babel filesystem layout (env + data on /data/user_data)
 ├── KT_paper.md                      ← reference paper
 ├── paper_math.md                    ← math
 ├── full_paper_plan.md               ← methodology
@@ -108,7 +117,7 @@ Expected output: `45 PASS / 0 FAIL (45 total)`. If anything fails, do not procee
 
 - **Real-model runs.** **CMU Babel** cluster via VS Code Remote-SSH. A100 80 GB for activation extraction + causal interventions; CPU nodes for tokenizer audit + manifold fitting + statistics + figures. Budget: ~24 GPU-hours total across 7 phases.
 - **Toy runs.** Any Python 3.10+ environment with `numpy`, `scipy`, `scikit-learn`, `matplotlib`, `torch`, `pandas`. CPU is sufficient. ~4 minutes wall clock.
-- **Persistent storage.** Babel scratch at `/data/user_data/$USER/blackbox/` (set as `$BLACKBOX_DATA`).
+- **Persistent storage.** Babel scratch at `/data/user_data/$USER/blackbox/` (set as `$BLACKBOX_DATA`). Conda env at `/data/user_data/$USER/envs/blackbox/`. See [SETUP.md](SETUP.md) for the full path table and the reasons (`$HOME` quota, no conda env in home).
 
 ---
 
