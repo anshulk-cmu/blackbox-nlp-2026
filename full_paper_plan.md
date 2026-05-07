@@ -238,7 +238,14 @@ h^ℓ(a) ≈ a · u_lin + Σ_{T ∈ {2, 5, 10, 100}} [cos(2π a / T) · u_cos^T 
 with KT's nine directions `u_lin, u_cos^2, u_sin^2, ..., u_cos^100, u_sin^100`
 (one linear, four cosines, four sines = 9 vectors in `R^{d_m}`) constituting
 a 9-parameter helix. The image of this fit is a smooth 1-dimensional manifold
-(the helix curve) sitting inside a 9-dimensional ambient subspace.
+(the helix curve) sitting inside an *up-to* 9-dimensional ambient subspace.
+For *integer-only* data (the empirical setting), the basis function
+`sin(2π · a / 2) = sin(π a) = 0` vanishes identically on integer `a`, so
+the identifiable basis has `K = 8` non-degenerate functions and the
+identifiable span dimension is `m = 8` (paper_math.md Remark 2.2; KT
+Figure 12). We retain the 9-vector notation when discussing the ideal
+continuous-input model, but use `m = 8` and `K = 8` in the empirical
+pipeline throughout.
 
 *Equivalence with KT's matrix form.* Equation (1) above can be written
 compactly as `helix(a) = C · B(a)^T`, matching KT Equation 2, where
@@ -299,7 +306,8 @@ define for any activation `h ∈ R^{d_m}`:
   (the search is over integers in the operand range from Section 1.2, with
   `[0, 198]` substituted when projecting onto the answer helix; this discrete
   search is what makes `M_C` a 1-dimensional submanifold rather than a
-  9-dimensional subspace) and setting `π_M(h) = h^ℓ_helix(â(h))`.
+  full `m`-dimensional subspace, with `m = 8` for integer data per
+  paper_math.md Remark 2.2) and setting `π_M(h) = h^ℓ_helix(â(h))`.
 - **The projection residual.** `r(h) = h - π_M(h)`.
 
 The whole paper depends on these two quantities behaving statistically the way
@@ -336,9 +344,17 @@ for every unit `u ∈ R^{d_m}`). Furthermore:
 
 **Assumption BD (boundedness).** There exists `D_max < ∞` such that, with
 probability at least `1 - δ` over the noise, `‖h‖_2 ≤ D_max` for every
-activation in the analysis sample. For sub-Gaussian noise plus a compact
-clean signal, `D_max = O(‖m_p‖_∞ + σ √(d_m + log(1/δ)))`; for activations
-after layer normalization, `D_max = O(√d_m)`. (Formal statement:
+activation in the analysis sample. For sub-Gaussian noise with parameter
+`σ` plus a compact clean signal `m_p` uniformly bounded by `‖m_p‖_∞`,
+the sub-Gaussian maximal inequality over `n` samples gives
+`D_max = ‖m_p‖_∞ + σ(√d_m + √log(n/δ))` — a *sum of two distinct terms*,
+not combined under one square root. The two terms have different origins:
+`σ √d_m` is the typical Euclidean norm of an isotropic d-dimensional
+sub-Gaussian vector, and `σ √log(n/δ)` is the maximum-over-n-samples
+penalty. Combining them as `σ √(d_m + log(1/δ))` (as the previous draft
+did) conflates the two regimes and is wrong when `n ≫ 1`. For
+activations after layer normalization, `‖m_p‖_∞ = O(√d_m)` typically,
+giving `D_max = O(√d_m + σ √log(n/δ))`. (Formal statement:
 [paper_math.md Assumption 3.4](paper_math.md).)
 
 **Assumption REG (manifold regularity).** There exist `τ_min > 0` and
@@ -350,6 +366,32 @@ the manifold's curvature scale so the linearization of paper_math.md
 Lemma 4.3 is valid. We verify `σ · κ_max ≤ 0.1` empirically per (model,
 layer) before computing `T_n`. (Formal statement:
 [paper_math.md Assumption 3.5](paper_math.md).)
+
+**Empirical diagnostics for REG and the curve-case drift (paper_math.md
+Remark 3.6).** Both the reach lower bound `τ(M) ≥ τ_min` and the
+curvature upper bound `‖II_p‖_op ≤ κ_max` are not directly observable
+but can be estimated from correct-population activations. We
+pre-register reporting the following diagnostics per (model, layer)
+pair before computing the test statistic:
+
+- *Reach lower bound* `τ̂`: Aamari–Levrard 2019 estimator
+  `τ̂ ≥ min_{i ≠ j} ‖h_c^(i) - h_c^(j)‖² / (2 · d(h_c^(i) - h_c^(j), T_{p_j} M))`
+  over a sample of pairs, where `T_{p_j} M` is estimated from local
+  PCA at `p_j`.
+- *Curvature upper bound* `κ̂_max`: maximum operator norm of
+  `g''(t)` (the local Hessian of the parametric helix curve) at
+  integer `t`, evaluated as `κ̂_max = max_t sup_{u ⊥ g'(t), ‖u‖=1}|⟨u, g''(t)⟩|`.
+- *Effective normal-bundle scale* `σ̂_eff`: from the empirical
+  residual covariance (paper_math.md Theorem 4.10 estimator).
+- *Curve-case drift* `η̂`: sample base points `{p_k}` along the curve,
+  estimate `P^N_{p_k}` from local PCA, compute
+  `η̂ = max_k ‖P_V (P^N_{p_k} - P^N_{p_0}) P_V‖_op` for the chosen `V`
+  and reference `p_0`.
+
+The test is treated as conditional on the joint event that
+`σ̂_eff · κ̂_max ≤ c_0` (small-noise regime) and `η̂ ≤ η_0` (drift
+control for the curve case). Layers failing these diagnostics are
+excluded.
 
 **Curvature terminology.** "Curvature" throughout this plan means
 *extrinsic* curvature, i.e., the operator norm of the second fundamental
@@ -378,13 +420,16 @@ m̃_c(a, b) := m_c(a, b) + P_T ξ(a, b),     ξ̃(a, b) := P_N ξ(a, b)
 ```
 
 preserves the model `h_w = m̃_c + ξ̃` while making `ξ̃ ⊥ T_{m̃_c} M` to
-first order; the second-order correction (rate `O(κ · ‖P_T ξ‖)`) is absorbed
-into the linearization error of paper_math.md Lemma 4.3. The full statement
-and proof outline of this re-centering is paper_math.md Lemma 3.2.
-Throughout the plan we work with this re-centered version and drop the
-tilde, treating `ξ ⊥ T M` as the working assumption. This is the same
-geometric noise decomposition used in Bickel-Lindner 2008 for non-Euclidean
-covariance models.
+first order; the second-order correction is curvature-controlled at the
+quadratic rate `‖ξ̃ - P_N ξ‖_2 ≤ (1/2) κ_max · ‖P_T ξ‖_2²` (paper_math.md
+Lemma 3.2 — note the *squared* tangent-component norm, not linear), and
+is absorbed into the linearization remainder `R_1 = O(σ² κ_max²)` of
+paper_math.md Lemma 4.3. The exponential map `exp_p: T_p M → M` makes
+this WLOG re-centering rigorous: for a 1D arc-length-parameterized curve,
+`exp_{g(t)}(c · g'(t)/‖g'(t)‖) = g(t + c)`. Throughout the plan we work
+with this re-centered version and drop the tilde, treating `ξ ⊥ T M` as
+the working assumption. This is the same geometric noise decomposition
+used in Bickel-Lindner 2008 for non-Euclidean covariance models.
 
 Third, BD and REG are routinely satisfied for residual-stream activations
 of layer-normalized transformers: `D_max = O(√d_m)` and the helix curve
@@ -402,10 +447,12 @@ pick up a `tr(P^N (Σ_ε^w - Σ_ε^c) P^N)` correction bounded by
 ### 1.5 Two manifold objects: the helix curve and the helix span
 
 KT's helix is *both* a 1-dimensional curve (the image of the parameterization
-`a ↦ helix(a)` for `a ∈ ℤ`) and the embedding of that curve into a
-9-dimensional ambient subspace (the column span of the linear axis plus
-four cosine and four sine directions). These are different geometric objects
-and they correspond to different failure modes.
+`a ↦ helix(a)` for `a ∈ ℤ`) and the embedding of that curve into an
+ambient subspace of dimension `m ∈ {8, 9}` (one linear axis plus the
+non-degenerate cosine/sine pairs; `m = 9` for continuous inputs, `m = 8`
+for integer-only inputs after the `sin(πa)`-degeneracy reduction —
+paper_math.md Remark 2.2). These are different geometric objects and they
+correspond to different failure modes.
 
 We define both formally and use both throughout.
 
@@ -414,11 +461,21 @@ We define both formally and use both throughout.
   `h = helix(a)` for some integer `a`. The closest-point projection
   `π_{M_C}(h) = argmin_{a ∈ ℤ} ‖h - helix(a)‖²` finds the nearest integer's
   helix point.
-- **Helix span `M_S`.** The 9-dimensional linear subspace
+- **Helix span `M_S`.** The linear subspace
   `M_S = span{u_lin, cos(2π·/T_j) · u_cos^{T_j}, sin(2π·/T_j) · u_sin^{T_j} : T_j ∈ {2, 5, 10, 100}}
-  ⊂ R^{d_m}`. A point `h` is "in the span" if it lies in this 9-dimensional
+  ⊂ R^{d_m}`. The *nominal* dimension of this span is 9 (one linear axis
+  plus four cosine/sine pairs); the *identifiable* dimension on integer
+  inputs is `m = 8` because the `sin(2π·a/2) = sin(πa) = 0` column
+  vanishes identically on integer `a` (paper_math.md Remark 2.2; also
+  KT Figure 12). We use `m = 9` for the continuous-input ideal model
+  and `m = 8` for the integer-only empirical setting, with `K = 8`
+  basis functions in the OLS design matrix throughout the empirical
+  pipeline. A point `h` is "in the span" if it lies in this `m`-dim
   subspace. The orthogonal projection `π_{M_S}(h) = U_S U_S^T h` for
-  orthonormal `U_S ∈ R^{d_m × 9}` is straightforward linear algebra.
+  orthonormal `U_S ∈ R^{d_m × m}` is straightforward linear algebra.
+  Throughout the paper, after the mean-centering of Remark 2.4
+  (paper_math.md), the affine `M_S` becomes the linear subspace
+  `S = span(...)` through the origin.
 
 The relationship: `M_C ⊂ M_S`. Every point on the curve is in the span,
 but most points in the span are not on the curve (they correspond to
@@ -431,8 +488,8 @@ failure modes.
 | Mode | `T_curve` | `T_span` | Interpretation |
 |---|---|---|---|
 | **On-curve, in-span** | low | low | Wrong activation lies on the helix at a different integer position. Position error, not geometric error. |
-| **Off-curve, in-span** | high | low | Wrong activation lies in the helix's 9D ambient subspace but not at any integer position. Interpolation/drift along the span. |
-| **Off-span** | high | high | Wrong activation has departed the 9D ambient subspace entirely. Geometric structure has broken. |
+| **Off-curve, in-span** | high | low | Wrong activation lies in the helix's `m`-dim ambient subspace but not at any integer position. Interpolation/drift along the span. |
+| **Off-span** | high | high | Wrong activation has departed the `m`-dim ambient subspace entirely. Geometric structure has broken. |
 
 The interpretive content of each mode is qualitatively distinct:
 
@@ -503,12 +560,22 @@ E[T_n]  =  ‖μ_ξ‖²  +  tr(Σ_ξ)  +  R_1(σ, κ_max),
 
 where `R_1(σ, κ_max) = O(σ² κ_max²)` is a linearization-error term that
 vanishes identically when `M` is linear (e.g., the helix span `M_S` after
-mean-centering).
+mean-centering). Importantly, the mean of `T_n` depends only on the
+perturbation `ξ`, not on the noise `ε`: under Assumption GM(iii) the two
+populations share `Σ_ε`, so the noise traces
+`tr(P^N Σ_ε P^N)` cancel exactly across the difference
+`Ȳ_w - Ȳ_c`. (Remark 4.9 of paper_math.md handles `Σ_ε^c ≠ Σ_ε^w`
+where the residual term `tr(P^N (Σ_ε^w - Σ_ε^c) P^N)` is bounded by
+`k · ‖Σ_ε^w - Σ_ε^c‖_op`.)
 
-**(b) Null behavior.** Under `H_0`: `μ_ξ = 0` and `Σ_ξ = 0`,
+**(b) Null behavior.** Under `H_0`: `μ_ξ = 0` and `Σ_ξ = 0` —
+equivalently, `ξ(a, b) ≡ 0`, so the wrong-population signal coincides
+with the correct-population signal in distribution.
 `E[T_n] = R_1(σ, κ_max)` — identically zero when `M` is linear, and
 `O(σ² κ_max²)` in general. Under Assumption REG with `σ · κ_max ≤ c_0`
-this is a small bias.
+this is a small bias. The null is a statement about the perturbation
+`ξ` being zero, *not* about the noise `ε`: the ε-contribution to
+`E[T_n]` cancels regardless of whether `ξ` vanishes.
 
 **(c) Non-asymptotic concentration.** For every `t > 0`,
 
@@ -556,13 +623,32 @@ interpretable directly), but the normalized form `T̄_n` is what we use
 when comparing across models with different `k` (which differs because
 the manifold dimension differs slightly across model architectures).
 
-**Anisotropic / effective-rank extension.** For anisotropic `Σ_ε`, the
-chi-squared variance `2 k σ⁴` is replaced by `2 tr((P^N Σ_ε)²)` and the
-mean by `tr(P^N Σ_ε P^N)`; the *effective rank*
-`k_eff = tr(P^N Σ_ε)² / tr((P^N Σ_ε)²)` plays the role of `k` throughout.
-For isotropic noise `k_eff = k`; for strongly anisotropic noise
-`k_eff ≪ k` and the bounds are tighter.
-([paper_math.md Remark 4.10](paper_math.md).)
+**Anisotropic / effective-rank extension (Theorem 4.10).** For arbitrary
+positive-semidefinite `Σ_ε` with `‖Σ_ε‖_op ≤ σ_op²`, define the
+*effective normal-bundle rank* and *effective normal-bundle scale*
+
+```
+k_eff   :=  (tr(P^N Σ_ε))² / tr((P^N Σ_ε)²)
+σ_eff²  :=  tr(P^N Σ_ε) / k_eff  =  tr((P^N Σ_ε)²) / tr(P^N Σ_ε)
+```
+
+For isotropic `Σ_ε = σ² I`, `k_eff = k` and `σ_eff² = σ²`. The
+chi-squared variance `2 k σ⁴` is replaced by `2 k_eff σ_eff⁴` and the
+mean by `tr(P^N Σ_ε P^N)`. The non-asymptotic concentration bound (via
+Hanson–Wright, paper_math.md Theorem 4.10 (4.7)) reads
+
+```
+P[ T_n - E[T_n] ≥ 2 σ_eff² √(2 k_eff u / n) + 2 σ_op² u / n ]  ≤  2 e^{-u}
+```
+
+— note the linear-tail term carries `σ_op²`, not `σ_eff²` (the operator
+norm controls the per-direction sub-exponential tail; the effective
+scale controls the Gaussian-tail variance). For strongly anisotropic
+noise `k_eff ≪ k` and the variance term tightens, but the linear-tail
+term is bounded by the worst-case direction. A consistent estimator
+`k̂_eff = (tr Σ̂_r)² / tr(Σ̂_r²)` from `Σ̂_r := (1/n_c) Σ r(h_c^(i)) r(h_c^(i))^T`
+is used in practice.
+([paper_math.md Theorem 4.10](paper_math.md).)
 
 **Plain-language interpretation.** Under the null, the test reads zero
 (up to a small `O(σ² κ_max²)` curvature bias). Under the alternative, it
@@ -725,32 +811,44 @@ with the manifold's normal bundle. We bound this in the worst case by
 
 **Full detail of Step 3: the concentration argument.**
 
-The summands `X_i = ‖r(h_i)‖²` are sub-exponential. Specifically, if
-`ε ∼ subG(σ²)`, then `‖ε‖² - E[‖ε‖²]` is sub-exponential with parameter
-`O(σ²)`. By Vershynin Theorem 2.8.2 (Bernstein),
+The summands `X_i = ‖r(h_i)‖²` are sub-exponential. Specifically, for
+isotropic Gaussian noise `ε ∼ N(0, σ² I)` and `k`-dimensional projection
+`P_p^N`, `‖P_p^N ε‖² ∼ σ² · χ²_k`, and the centered chi-square is
+sub-exponential with the *Laurent–Massart* parameters
 
 ```
-P[ |X̄_n - μ| > t ]  ≤  2 · exp(-c · n · min(t² / K², t / K))
+(ν, α) = (2 σ² √k,  2 σ²)
 ```
 
-where `K` is the sub-exponential parameter, here `K = O(σ²)`.
-
-Applied to each population:
-
-```
-P[ |X̄_c - E[X_c]| > t/2 ]  ≤  2 · exp(-c · n_c · min(t² / σ⁴, t / σ²))
-P[ |X̄_w - E[X_w]| > t/2 ]  ≤  2 · exp(-c · n_w · min(t² / σ⁴, t / σ²))
-```
-
-Union bound:
+(paper_math.md Lemma 4.7). The two parameters separate the Gaussian-tail
+regime (rate `t²/(k σ⁴)`) from the linear-tail regime (rate `t/σ²`).
+Importantly, `ν` scales as `σ² √k`, *not* as `σ²` alone — the previous
+draft's "`K = O(σ²)`" obscured the `√k` dependence. Laurent–Massart
+[laurent2000] Lemma 1 states for `Z ∼ χ²_k` and `u > 0`,
 
 ```
-P[ |T_n - E[T_n]| > t ]  ≤  P[ |X̄_w - E[X_w]| > t/2 ] + P[ |X̄_c - E[X_c]| > t/2 ]
-                          ≤  4 · exp(-c · min(n_c, n_w) · min(t² / σ⁴, t / σ²))
+P[Z - k ≥ 2 √(k u) + 2 u]  ≤  e^{-u}
+P[Z - k ≤ -2 √(k u)]        ≤  e^{-u}
 ```
 
-This is the stated concentration. The factor of 4 vs 2 in the constant is
-absorbed into `c`. □
+Multiplied by `σ²` and propagated through the empirical mean
+(paper_math.md Lemma 4.8), this gives, for any `u > 0` and per-population,
+
+```
+P[ X̄_n - μ ≥ 2 σ² √(k u / n) + 2 σ² u / n ]  ≤  e^{-u}
+```
+
+Applying to each population at level `u/2` and union-bounding over
+upper/lower tails of two populations (4 events total) gives
+
+```
+P[ |T_n - E[T_n]| ≥ 2 σ² √(2 k u / n) + 2 σ² u / n ]  ≤  4 e^{-u}
+```
+
+This is the sharp Laurent–Massart form of Theorem 1(d). For the
+Bernstein-style form (4.1) of Theorem 1(c), set
+`u = c n min(t²/(k σ⁴), t/σ²)`; the constant `c ≥ 1/8` is the LM
+sub-exponential chi-square constant. □
 
 ### 2.3 Theorem 2: localization power
 
@@ -763,12 +861,23 @@ below paraphrases all three parts.
 **Statement.** Under Assumptions GM, BD, REG with isotropic Gaussian
 noise, suppose **`ξ(a, b) ∈ V`almost surely** (so `μ_ξ ∈ V` and `Σ_ξ`
 has support in `V`) where `V ⊂ R^{d_m}` is a fixed `r`-dimensional
-subspace satisfying `V ⊆ ∩_p N_p M` — that is, `V` lies in the *common
-normal bundle*, the intersection of normal spaces over the support of
-the manifold `M`. (For a 1-D curve `M_C` in `R^{d_m}`, the common normal
-bundle has codimension 1; any subspace orthogonal to every tangent line
-of `M_C` qualifies. For the 9-D helix span `M_S`, the common normal
-bundle is its `(d_m - 9)`-dimensional orthogonal complement.) Define
+subspace, and *one of the following holds*:
+
+- **(L) Linear-span case.** `M = M_S` is the linear (helix) span. The
+  common-normal subspace condition `V ⊆ ∩_p N_p M = M_S^⊥` is automatic
+  (since `N_p M_S` is constant in `p`).
+- **(C) Curve case with bounded normal-frame drift.** `M = M_C` is the
+  helix curve, `V ⊆ N_{p_0} M_C` at a reference base point `p_0`, and
+  the *normal-frame drift constant*
+  `η := sup_{p ∈ M} ‖P_V (P_p^N - P_{p_0}^N) P_V‖_op ≤ η_0` is small.
+  In this case, the conclusions hold with an additional
+  `O(η_0 D_max^2)` term in `E[T_n^V]` and `O(η_0 r σ^2)` in variance.
+
+The strict assumption `V ⊆ ∩_p N_p M` used in earlier drafts is
+unrealistic for a curved 1D manifold: the normal space rotates along
+the curve and the intersection over all `p` collapses to a small set.
+Case (C) replaces it by an explicit, empirically verifiable drift bound
+(see [paper_math.md §5.2](paper_math.md), Theorem 5.2). Define
 
 ```
 T_n^V = (1 / n_w) · Σ_{j=1}^{n_w} ‖P_V r(h_w^{(j)})‖²  -  (1 / n_c) · Σ_{i=1}^{n_c} ‖P_V r(h_c^{(i)})‖²
@@ -789,23 +898,38 @@ for an absolute constant `C_1` and `n = min(n_c, n_w)`. By contrast, the
 unprojected test of Theorem 1 requires `n ≥ C · (d_m - dim(M)) σ⁴ / Δ⁴ · log(1/β)`
 to achieve the same power.
 
-**(b) Minimax lower bound.** Let `P_Δ` denote the class of GM distributions
-with `‖μ_ξ‖_2 ≥ Δ` and `ξ ∈ V`. Any test `ψ` with size at most `α` and
-uniform power `inf_{P ∈ P_Δ} P[ψ = 1] ≥ 1 - β` requires
+**(b) Two-point Le Cam lower bound (proven).** Let `P_Δ` denote the class
+of GM distributions with `‖μ_ξ‖_2 ≥ Δ` and `ξ ∈ V`. Any test `ψ` with
+size at most `α` and uniform power `inf_{P ∈ P_Δ} P[ψ = 1] ≥ 1 - β`
+requires
 
 ```
-n  ≥  C_2 · r σ⁴ / Δ⁴ · log(1 / (β (1 - α)))
+n  ≥  C_2^{LC} · σ² / Δ² · log(1 / (β (1 - α)))      (proven, two-point Le Cam)
 ```
 
-for an absolute constant `C_2`. Hence `T_n^V` is minimax-optimal in
-`r, σ², Δ²` up to absolute constants. The proof uses Le Cam two-point
-plus Fano chaining over a packing of `r` mutually orthogonal directions
-in `V`, each of norm `Δ / √2`; see [paper_math.md §5.6](paper_math.md)
-Lemmas 5.5–5.6 and the proof of Theorem 5.2(b). *We flag the chaining
-step as the place we are least confident in the writeup* — it is one of
-the open questions to Barnábás (paper_math.md §11, item 4). The two-point
-Le Cam form gives `r σ² / Δ²` directly; the `r σ⁴ / Δ⁴` rate requires
-the chaining argument.
+This is the rate established in [paper_math.md §5.6](paper_math.md) via
+Lemmas 5.5–5.6. It matches the upper bound in `σ² / Δ²` but does not
+match in `r` or in the exponent of `Δ`.
+
+**(b') Conjectured matching minimax rate.** We conjecture but do not
+prove in this submission that the achievable rate (a) is minimax-optimal:
+
+```
+n  ≥  C_2 · r σ⁴ / Δ⁴ · log(1 / (β (1 - α)))         (conjectured)
+```
+
+This is the standard separation rate for testing `N(0, σ²I_r)` against
+`{N(μ, σ²I_r) : ‖μ‖ = Δ}`, established by Ingster (1993, 2003) and
+refined non-asymptotically by Baraud (2002) and
+Collier–Comminges–Tsybakov (2017). The argument combines Le Cam with a
+chi-squared mixture over a packing of `S^{r-1}(Δ)` — *not* the
+Fano-over-orthogonal-directions argument an earlier draft sketched
+(which gives only `r σ² / Δ² · log r`). Translating Ingster's argument
+to our setting requires checking that the wrong-population conditional
+distribution under GM matches the Gaussian sequence model after
+Lemma 5.3's projection; we believe this is straightforward but have
+not pushed it through. We treat (b') as a target for follow-up work
+and present the BlackboxNLP submission with (b) only.
 
 **(c) Exact null distribution.** Under `H_0` with isotropic Gaussian noise
 and oracle `M`,
@@ -814,9 +938,25 @@ and oracle `M`,
 (n_c n_w / (n_c + n_w)) · T_n^V / σ²   →_d   ½ (χ²_r - r),
 ```
 
-giving closed-form `p`-values without permutation. Berry–Esseen with the
-modern Esseen constant gives the standardized rate `O(√(r/n))` (Tyurin
-2010), supporting Wald-type confidence intervals when `n ≫ r`.
+equivalently `T_n^V` is distributed exactly as a difference of two scaled
+chi-squared random variables (a generalized chi-squared in the sense of
+Davies 1980): `(1/n_p) Σ ‖P_V r(h_{i,p})‖² ∼ (σ²/n_p) χ²_{n_p · r}` for
+each population, and `T_n^V = Ȳ_w - Ȳ_c`. The Wald form
+`√(n_c n_w / (n_c + n_w)) · T_n^V / (σ² √(2r)) →_d N(0,1)` gives
+closed-form `p`-values without permutation. Berry–Esseen with the modern
+Esseen constant `0.4748` (Tyurin 2010) gives the standardized rate
+
+```
+sup_t | P[ (T_n^V - E[T_n^V]) / √(Var(T_n^V)) ≤ t ] - Φ(t) |  ≤  O(1 / √(n · r))
+```
+
+Note the rate *improves* with `r` (the chi-squared distribution is closer
+to Gaussian when `r` is large, by internal CLT applied to
+`χ²_r = Σ_i Z_i²`). For fixed `r`, the rate is the classical `O(n^{-1/2})`.
+The previous draft incorrectly stated the rate as `O(√(r/n))`, which
+inverts the scaling — paper_math.md Remark 4.11 explicitly catches
+this. Wald-type CIs are valid when `n · r ≫ 1`, which is essentially
+always.
 
 **Plain-language interpretation.** If you can guess a low-dimensional
 subspace `V` that contains the perturbation, projecting onto `V` first
@@ -830,7 +970,8 @@ This is a substantial but not astronomical improvement. We deliberately
 *do not* claim quadratic-in-`r` speedups; the variance of the chi-squared
 test statistic scales linearly in dimension, so the sample-complexity
 gain scales linearly in `(d_m - dim(M))/r`, not quadratically. The
-minimax lower bound (b) confirms this rate is tight up to constants.
+two-point lower bound (b) gives only the `σ² / Δ²` floor; whether the
+matching `r σ⁴ / Δ⁴` rate (b') holds is open (see above).
 
 **Why the rate has `r` in it, not `d_m - dim(M)`.** The noise variance
 scales with the dimension of the residual space. By projecting to `V`,
@@ -864,13 +1005,15 @@ The five-step structure of the formal proof is:
    (paper_math.md Lemma 5.4).
 3. **Achievability**: solve for the sample size that makes the
    level-`α` test achieve power `1 - β` (steps 1–4 below).
-4. **Minimax lower bound** via Le Cam two-point plus Fano chaining
-   (paper_math.md Lemmas 5.5–5.6 and the proof of Theorem 5.2(b)).
-   This is the part we flag as least confident — Barnábás's input on
-   the chaining step is requested in paper_math.md §11 item 4.
+4. **Two-point Le Cam lower bound** at rate `σ² / Δ²` (paper_math.md
+   Lemmas 5.5–5.6 and the proof of Theorem 5.2(b)/(5.2a)). The matching
+   `r σ⁴ / Δ⁴` rate is conjectural and would require an Ingster-style
+   chi-squared mixture; see paper_math.md §11 item 4.
 5. **Exact null distribution**: under `H_0` with isotropic Gaussian noise
    and oracle `M`, the standardized statistic converges to `½(χ²_r - r)`,
-   with explicit Berry–Esseen rate `O(√(r/n))`. (Proof of Theorem 5.2(c).)
+   with explicit Berry–Esseen rate `O(1/√(n r))` — note the rate
+   *improves* with `r` (paper_math.md Remark 4.11), not `O(√(r/n))` as
+   the previous draft incorrectly stated. (Proof of Theorem 5.2(c).)
 
 The plan retains the achievability walkthrough below; the lower-bound
 and null-distribution parts are referenced rather than re-derived here.
@@ -914,26 +1057,43 @@ For the test to detect a signal of size `Δ²` against a noise variance of
 `r σ⁴ / n`, we need `Δ² ≥ z_{1-β} · √(r σ⁴ / n)`, giving
 `n ≥ z_{1-β}² · r σ⁴ / Δ⁴ = O(r σ⁴ / Δ⁴ · log(1/β))`. □
 
-**Full detail of Step 1: why projection commutes with the residual when V ⊥ T M.**
+**Full detail of Step 1: projection of the residual under (L) and (C).**
 
-We claim `P_V r(h_w) = P_V (ξ + ε_w)` when `V ⊥ T_p M` and `μ_ξ ∈ V`.
+We claim `P_V r(h_w) = P_V (ξ + ε_w) + e_w` with `e_w` controlled
+according to the regime ((L) or (C)).
 
-Recall `r(h_w) ≈ ξ + P_p^N ε_w` from Theorem 1's Step 1. Now,
+Recall `r(h_w) ≈ ξ + P_p^N ε_w + R_2` from Theorem 1's Step 1, where
+`R_2 = O(κ_max ‖P^N δ‖²)` is the tubular linearization remainder. Then
 
 ```
-P_V r(h_w)  =  P_V (ξ + P_p^N ε_w)
-            =  P_V ξ + P_V P_p^N ε_w
+P_V r(h_w)  =  P_V ξ + P_V P_p^N ε_w + P_V R_2
 ```
 
-Term 1: `P_V ξ`. Since `V ⊥ T_p M`, we have `V ⊆ N_p M` (the normal bundle
-to `M` at `p`). And `ξ ∈ V` by hypothesis (the perturbation lives in `V`).
-So `P_V ξ = ξ`.
+**Case (L) — linear span.** When `M = M_S` is linear, `P_p^N = I - U_S U_S^T`
+is constant in `p`, so `V ⊆ M_S^⊥` gives `P_V P_p^N = P_V` exactly, and
+the tubular remainder `R_2` vanishes (`κ_max = 0` for a linear M). Hence
+`P_V r(h_w) = ξ + P_V ε_w` exactly to leading order in `σ²` (paper_math.md
+Lemma 5.3, case (L)).
 
-Term 2: `P_V P_p^N ε_w`. Since `V ⊆ N_p M`, projection onto `V` is
-projection within `N_p M`. So `P_V P_p^N = P_V` (we can absorb the normal
-projection into the V projection). Therefore `P_V P_p^N ε_w = P_V ε_w`.
+**Case (C) — curve with bounded normal-frame drift.** When `M = M_C` is
+the helix curve, `V ⊆ N_{p_0} M` at the reference base point but
+`V ⊄ N_p M` at general `p`. Decompose
+`P_V P_p^N = P_V P_{p_0}^N + P_V (P_p^N - P_{p_0}^N) = P_V + P_V (P_p^N - P_{p_0}^N)`,
+the second term having operator norm at most `η ≤ η_0` on `V`. Hence
 
-Combining: `P_V r(h_w) = ξ + P_V ε_w`. ✓
+```
+‖P_V P_p^N ε - P_V ε‖  ≤  η_0 ‖ε‖    (drift error, O_P(η_0 σ))
+‖P_V P_p^N ε_w (when ξ ≠ 0) - P_V ε_w‖  =  O_P(η_0 ‖ξ‖)   (additional drift)
+```
+
+so `‖e_c‖, ‖e_w‖ = O_P(σ² κ_max) + O_P(η_0 (σ + ‖ξ‖))` — the second
+term is the normal-frame drift error specific to case (C). The
+conclusions of Theorem 2 hold with an additional `O(η_0 D_max²)`
+term in `E[T_n^V]` and `O(η_0 r σ²)` in variance, both of which we
+report alongside the diagnostic `η̂ ≤ η_0`. ✓ The strict assumption
+`V ⊆ ∩_p N_p M` used in earlier drafts holds in case (L) trivially
+and in case (C) only with `η_0 = 0` (which fails for a curved 1D
+manifold whose normal space rotates along the curve).
 
 **Full detail of Step 2: the variance gain.**
 
@@ -1023,36 +1183,56 @@ discusses the T=2 fragility explicitly.
 
 Suppose Assumption GM holds with sub-Gaussian within-class noise of
 parameter `σ`, and the parametric class is well-specified
-(`E[H_c | B] = B (C*)^T` exactly). Let `λ_min^B := λ_min(E[bb^T])` where
-`b = (b_1(a), ..., b_K(a))^T` and the expectation is over the empirical
-distribution of integer labels. Let `σ_K(C*)` denote the smallest
-singular value of the population coefficient matrix `C* ∈ R^{K × d_m}`.
-Then with probability at least `1 - δ`,
+(`E[H_c | B] = B (C*)^T` exactly). Let `λ_min^B := λ_min(E[bb^T])` and
+`λ_max^B := λ_max(E[bb^T])` where `b = (b_1(a), ..., b_K(a))^T` and the
+expectation is over the empirical distribution of integer labels. Let
+`κ^B := λ_max^B / λ_min^B` denote the design condition number, and let
+`σ_K(C*)` denote the smallest singular value of the population
+coefficient matrix `C* ∈ R^{K × d_m}`. Then with probability at least
+`1 - δ`,
 
 ```
-sin θ_max(M̂_param, M)  ≤  C_3 · σ / (λ_min^B · σ_K(C*)) · √(d_m · log(d_m / δ) / n_c)
+sin θ_max(M̂_param, M)  ≤  C_3 · σ √(κ^B) / (√(λ_min^B) · σ_K(C*)) · √(d_m · log(d_m / δ) / n_c)
 ```
 
-for an absolute constant `C_3`. The product `λ_min^B · σ_K(C*)` is the
-"effective signal strength" of the parametric fit. For KT's helix with
-periods `T ∈ {2, 5, 10, 100}` (with `K = 8` after dropping the degenerate
-`sin(πa)` column), both factors are bounded away from zero on the integer
-range `[0, 99]`, so the bound is non-trivial.
+for an absolute constant `C_3` (paper_math.md Theorem 6.2, eq (6.1)).
+When the helix design is well-conditioned (`κ^B = O(1)`, which holds
+for the orthonormalized helix basis after centering), this simplifies to
+
+```
+sin θ_max  ≤  C_3' · σ / (√(λ_min^B) · σ_K(C*)) · √(d_m log(d_m / δ) / n_c)
+```
+
+The denominator carries `√(λ_min^B)` rather than `λ_min^B`: in the OLS
+operator-norm bound, `(B^T B / n_c)^{-1}` contributes `1/λ_min^B`, but
+`‖B^T E‖_op ≲ σ √(n_c · λ_max^B · (d+K))` contributes a `√(λ_max^B)`,
+and the two combine to `√(λ_max^B)/λ_min^B = √(κ^B)/√(λ_min^B)`. The
+previous draft had `1/λ_min^B` as a single factor in the denominator,
+which is dimensionally incorrect — paper_math.md §6.2 prose corrects
+this. The product `√(λ_min^B) · σ_K(C*)` is the "effective signal
+strength" of the parametric fit. For KT's helix with periods
+`T ∈ {2, 5, 10, 100}` (with `K = 8` after dropping the degenerate
+`sin(πa)` column), both factors are bounded away from zero on the
+integer range `[0, 99]`, so the bound is non-trivial.
 
 **Proof.** The proof has two steps: (1) operator-norm bound on the OLS
 coefficient via matrix concentration, (2) operator-norm Wedin to convert
-to sin-theta. We use **operator-norm Wedin** (paper_math.md Lemma 6.4)
-rather than Frobenius Davis–Kahan / Yu-Wang-Samworth as in the previous
-draft; this saves a `√K` factor in the constant. Standard linear-regression
-theory (Vershynin 2018, Section 4.7) gives the operator-norm bound on
+to sin-theta. We use **operator-norm Wedin** (paper_math.md Lemma 6.4
+via Stewart–Sun 1990 Theorem 3.6) rather than Frobenius Davis–Kahan /
+Yu-Wang-Samworth as in the previous draft; this saves a `√K` factor in
+the constant. Standard linear-regression theory (Vershynin 2018,
+Section 4.7) gives the operator-norm bound on
 `Ĉ = (B^T B)^{-1} B^T H_c`:
 
 ```
-‖Ĉ - C*‖_op  ≤  C · σ · √((d_m + K log(d_m / δ)) / (n_c · λ_min^B))
+‖Ĉ - C*‖_op  ≤  C · σ · √(κ^B) / √(λ_min^B) · √((d_m + K log(d_m / δ)) / n_c)
 ```
 
-Wedin's perturbation theorem (paper_math.md Lemma 6.4) applied to
-`A = (C*)^T` and `E = (Ĉ - C*)^T` then gives
+(paper_math.md eq (6.2)). The combination
+`√(κ^B)/√(λ_min^B) = √(λ_max^B)/λ_min^B` reflects the joint contribution
+of `(B^T B/n_c)^{-1}` and `‖B^T E‖_op`. Wedin's perturbation theorem
+(paper_math.md Lemma 6.4) applied to `A = (C*)^T` and `E = (Ĉ - C*)^T`
+then gives
 
 ```
 sin θ_max(col-span((Ĉ)^T), col-span((C*)^T))  ≤  2 ‖Ĉ - C*‖_op / σ_K(C*)
@@ -1071,15 +1251,21 @@ re-introduce `√K`; pending Barnábás's verification.
 **Full detail of the OLS operator-norm bound.** See
 [paper_math.md Lemma 6.3](paper_math.md). Under sub-Gaussian noise with
 parameter `σ` and design matrix with population Gram `Σ_B = E[bb^T]`
-(`λ_min^B = λ_min(Σ_B) > 0`), with probability at least `1 - δ`,
+(`λ_min^B = λ_min(Σ_B) > 0`, `λ_max^B = λ_max(Σ_B) < ∞`), with
+probability at least `1 - δ`,
 
 ```
-‖Ĉ - C*‖_op  ≤  C · σ · √((d_m + K log(d_m / δ)) / (n_c · λ_min^B))
+‖Ĉ - C*‖_op  ≤  C · σ · √(λ_max^B) / λ_min^B · √((d_m + K log(d_m / δ)) / n_c)
+             =  C · σ · √(κ^B) / √(λ_min^B) · √((d_m + K log(d_m / δ)) / n_c)
 ```
 
-via Vershynin 2018 Section 4.7 plus matrix Bernstein (Tropp 2015) to
-invert `B^T B / n_c` (whose minimum eigenvalue is
-`λ_min^B (1 - O(√(K log K / n_c)))` for `n_c ≫ K log K`).
+via Vershynin 2018 Section 4.7 (which gives
+`‖B^T E‖_op ≤ C σ √(n_c · λ_max^B · (d_m + K log(d_m/δ)))`) plus matrix
+Bernstein (Tropp 2015) to invert `B^T B / n_c` (whose minimum eigenvalue
+is `λ_min^B (1 - O(√(K log K / n_c)))` for `n_c ≫ K log K`). Note the
+distinction from the previous draft: the previous form
+`√((d_m + K log(d_m/δ)) / (n_c · λ_min^B))` is missing the `√(λ_max^B)`
+factor that comes from `‖B^T E‖_op`.
 
 **Full detail of the Wedin composition.** See
 [paper_math.md Lemma 6.4](paper_math.md). For full-column-rank
@@ -1245,7 +1431,7 @@ bug. We discuss in a remark and do not report LDA as a primary estimator.
 
 | Method | sin θ at n=4000 | Scaling | Theory | Recommendation |
 |---|---|---|---|---|
-| 1. Parametric helix | 0.011 (0.64°) | 1/√n | Clean (Yu-Wang-Samworth) | **Primary**, matches KT |
+| 1. Parametric helix | 0.011 (0.64°) | 1/√n | Clean (op-norm Wedin) | **Primary**, matches KT |
 | 2. PCA on class means | 0.110 (6.31°) | Saturates | Bias-limited | **Cautionary baseline** |
 | 3. Local PCA | breaks | Diverges | Curvature limit | **Negative result** |
 | 4. Diffusion Maps + reg | 0.022 (1.27°) | 1/√n | Operator conv. + reg | **Secondary, Riemannian** |
@@ -1275,11 +1461,12 @@ parametric `M̂_param` satisfies, with probability at least `1 - 2δ`,
 (where the first term is the sharp Laurent–Massart form from Theorem 1(d)
 and the second is the Wedin operator-norm bound from
 paper_math.md Theorem 6.6's proof). Substituting Theorem 3's bound on
-`sin θ_max(M̂, M)` gives the explicit form
+`sin θ_max(M̂, M)` (with the corrected `√(κ^B)/√(λ_min^B)` factor) gives
+the explicit form
 
 ```
 |T_n^{M̂} - E[T_n]|  ≤  2 σ² √(2 k log(2/δ) / n) + 2 σ² log(2/δ) / n
-                       +  C_4 · D_max² · σ / (λ_min^B σ_K(C*)) · √(d_m log(d_m / δ) / n_c)
+                       +  C_4 · D_max² · σ √(κ^B) / (√(λ_min^B) σ_K(C*)) · √(d_m log(d_m / δ) / n_c)
 ```
 
 where:
@@ -1306,6 +1493,29 @@ is `n_c ≥ C · σ² · 4096 · log 4096 ≈ 34000 σ²`. With `σ ≈ 0.1` (ty
 post-LayerNorm), this is `n_c ≥ 340`. Easily achievable with the 10,000
 ordered-pair dataset, subject to the exact tokenizer-retained count
 reported empirically in Appendix H.
+
+**Remark on tightening `D_max²` via centering (paper_math.md Remark 6.7).**
+The `D_max²` factor in the manifold-error term is potentially loose: it
+bounds the squared norm of the activation, including the center-of-mass
+component which is annihilated by the projection difference
+`π_M - π_{M̂}` when both pass through the same affine offset. After
+mean-centering activations (paper_math.md Remark 2.4), the relevant
+quantity is the *centered* width
+`D_max^ctr := max_i ‖h_c^(i) - h̄_c‖`, which is typically much smaller
+than the uncentered `‖h_c^(i)‖` at deeper layers (where activations have
+large mean component due to residual-stream accumulation). Empirically
+we expect `D_max^ctr / D_max ∈ [0.1, 0.3]`. We will report both the
+uncentered Theorem 6.6 bound and the centered version with `D_max^ctr`
+replacing `D_max`.
+
+**Unstable-subspace sharpening (paper_math.md Remark 6.7, second
+sharpening).** When `M̂` and `M` share their first `m_0` basis directions
+(typical for the helix span where the linear and large-period
+`T ∈ {50, 100}` components are recovered with high accuracy and the
+bulk of the error is in high-frequency `T ∈ {2, 5}` components), the
+relevant operator-norm difference `‖π_M - π_{M̂}‖_op` is restricted to
+the unstable subspace, often substantially smaller than the global
+`sin θ_max`. We report both the global and per-subspace versions.
 
 ---
 
@@ -1499,14 +1709,30 @@ samples per non-empty cell are ~30–50 correct and ~3–5 wrong. We pre-
 register a *minimum 2 wrong samples per bin* threshold — bins below this
 are dropped from the matched analysis.
 
+**Data convention for matched permutation (paper_math.md §8 data
+convention).** The matched permutation test runs on the *pooled* data
+`D_n = {(a_i, b_i, h_i, y_i)}_{i=1}^n` where `i` indexes the union of
+correct and wrong populations and `y_i ∈ {0, 1}` is the correctness
+label. We do *not* permute within `H_c` alone (which would give
+single-label bins where permutation is meaningless); we permute the
+*labels* `y_i` within bins of pooled `(h_i, y_i)` pairs. The
+exchangeability condition
+`H_0^cond: h ⊥ y | φ(a, b)` is then well-defined, and the permutation
+group `G = ∏_B 𝔖(φ⁻¹(B))` acts on the data by permuting indices
+within each bin. Lehmann–Romano 2005 Theorem 15.2.1 (the randomization
+hypothesis for general invariance groups) then gives
+`P[T_n^matched > c_α] ≤ α`.
+
 For the matched analysis:
 
 1. Bin all problems by `φ`. Within each retained bin, count correct
    (`n_c^bin`) and wrong (`n_w^bin`) samples; require `n_w^bin ≥ 2` and
    `n_c^bin ≥ 2`.
 2. Run a bin-restricted permutation test: shuffle correct/wrong labels
-   only among samples within that bin, recompute `T_n^bin`, build a
-   bin-conditional null distribution from 1000 shuffles.
+   only among samples within that bin (i.e., permute `y_i` while
+   holding `h_i` and `φ(a_i, b_i)` fixed within bin), recompute
+   `T_n^bin`, build a bin-conditional null distribution from 1000
+   shuffles.
 3. The matched test statistic `T_n^matched` is the inverse-variance
    weighted average of per-bin test statistics, with weights
    proportional to `min(n_c^bin, n_w^bin)`.
@@ -1562,7 +1788,35 @@ Chernozhukov et al. 2018: the influence function
 
 is orthogonal at first order to manifold-estimation errors, so the
 cross-fitted statistic is `√n`-consistent without rate loss from the
-plug-in `M̂`. The asymptotic variance is
+plug-in `M̂`.
+
+**Explicit Neyman-orthogonality verification (paper_math.md §7.3).**
+Parameterize the moment function in the linear-span case as
+
+```
+ψ(h_c, h_w; θ, Π) := (‖h_w - Π h_w‖² - ‖h_c - Π h_c‖²) - θ
+```
+
+with `Π = U U^T` for orthonormal `U ∈ R^{d × m}`, and let `Δ_U` be a
+Stiefel-tangent direction (`U^T Δ_U + Δ_U^T U = 0`). Then
+
+```
+∂_t E[ψ(h_c, h_w; θ_0, Π_M + t · (U Δ_U^T + Δ_U U^T))]|_{t=0}
+   = -2 E[ h^T (U Δ_U^T + Δ_U U^T)(I - UU^T) h ]
+```
+
+Under Assumption GM with the centered model `E[h_p] ∈ M_S = col(U)` for
+both populations, `(I - UU^T) E[h_p] = 0` to leading order under both
+populations, so the cross-term vanishes from population means. The
+remaining variance contribution is the same across populations under
+GM(iii) and cancels in the difference `E[ψ]`. Hence the Gateaux
+derivative vanishes, establishing Neyman-orthogonality. Under the
+alternative `μ_ξ ≠ 0`, the orthogonality holds at first order in
+`‖Û - U‖_op`, with residual bias of order
+`‖Û - U‖_op · ‖μ_ξ‖ = o_P(‖μ_ξ‖²)` whenever Theorem 6.2 gives
+`sin θ_max = o_P(Δ)`.
+
+The asymptotic variance is
 
 ```
 V_∞ = Var(φ_w(h_w)) / (n_w / n) + Var(φ_c(h_c)) / (n_c / n)
@@ -1902,16 +2156,25 @@ Two specializations matter for the experiments below.
 
 #### 3.9.2 Behavioral metric: logit difference
 
-Following Wang-Variengien 2022, the behavioral metric is the logit
-difference at the answer position:
+Following Wang-Variengien 2022 and Conmy et al. 2023 (paper_math.md
+Definition 9.2), define `LD` as a *downstream forward-pass functional*:
+for `h ∈ R^{d_m}` representing a candidate residual-stream activation
+at the analysis layer `ℓ_m` on a problem `(a, b)` with answer token
+`τ(s)`, let `forward_{ℓ_m → L}(h; a, b)` denote the model's downstream
+forward pass — the function that takes `h` at layer `ℓ_m` in place of
+the model's natural activation `h(a, b)` and propagates through layers
+`ℓ_m + 1, …, L` and the unembedding map, producing logits at the
+answer position. Then
 
 ```
-LD(h)  =  logit_{a + b}(h)  -  max_{t ≠ a + b} logit_t(h)
+LD(h; a, b)  =  logit^final_{τ(s)}(forward_{ℓ_m → L}(h; a, b))
+              -  max_{t ≠ τ(s)} logit^final_t(forward_{ℓ_m → L}(h; a, b))
 ```
 
-where `logit_t(h)` is the logit assigned to token `t` after running the
-forward pass with `h` substituted at layer `ℓ_m` and the unmodified
-forward pass continuing thereafter.
+Critically, `LD(h; a, b)` is well-defined for *any* `h ∈ R^{d_m}`, not
+only for the natural activation `h(a, b)`. We write `LD(h)` when the
+dependence on `(a, b)` is clear from context. This is the standard
+activation-patching formalism (Wang–Variengien 2022; Conmy et al. 2023).
 
 Higher `LD` means more correct. `LD > 0` means the model would predict
 `a + b` (the correct answer). `LD < 0` means it would predict something
@@ -2010,35 +2273,95 @@ tests. The formal statement and proof outline are
 matches the math file.
 
 **Proposition 4 (causal sufficiency, second-order, with Hessian
-remainder).** Assume the model's logit-difference `LD: R^{d_m} → R` is
-twice continuously differentiable, with operator-norm-bounded Hessian:
+remainder).** Assume the model's logit-difference
+`LD: R^{d_m} → R` (in the downstream-forward-pass sense of Definition 9.2,
+paper_math.md) is twice continuously differentiable, with
+operator-norm-bounded Hessian:
 
 ```
-sup_{h ∈ B(h_c, ρ)}  ‖∇²_h LD(h)‖_op  ≤  L     for ρ > 2 ‖μ̂_ξ‖.
+sup_{h ∈ B(h_c, ρ)}  ‖∇²_h LD(h)‖_op  ≤  L     for ρ > 2 (‖μ̂_ξ‖ + D_max^V),
 ```
+
+where `D_max^V := sup_i ‖P_V h_c^(i)‖` is the maximum norm of the
+V-projection of correct activations.
+
+**The patch displacement is not just `U_V μ̂_ξ`.** The patch operation
+`Patch(h_c, V, 1, μ̂_ξ) = h_c + U_V μ̂_ξ - P_V h_c` *replaces* the
+V-component of `h_c` by `U_V μ̂_ξ`, so the displacement is
+
+```
+Δh_c := Patch(h_c, V, 1, μ̂_ξ) - h_c  =  U_V μ̂_ξ - P_V h_c
+```
+
+(paper_math.md Proposition 9.3). This corrects the previous draft's
+displacement `Δh = U_V μ̂_ξ`, which omitted the `-P_V h_c` term and is
+generally wrong unless `P_V h_c = 0` exactly.
 
 If `V` localizes the wrong-population perturbation in the sense of
 Theorem 2 (that is, `T_n^V > 0` significantly and `T_n^{V_random} ≈ 0`),
 then injecting `μ̂_ξ ∈ V` into correct activations satisfies
 
 ```
-|ACE_S - ACE_S^linear|  ≤  L / 2 · ‖μ̂_ξ‖²,        [Hessian remainder]
+|ACE_S - ACE_S^linear|  ≤  (L / 2) · E_{h_c}[ ‖Δh_c‖² ]
+                        =  (L / 2) · ( ‖μ̂_ξ‖² + E‖P_V h_c‖² - 2 μ̂_ξ^T U_V^T E[P_V h_c] )
+                                                                  [Hessian remainder]
 ```
 
 where the first-order linear prediction is
 
 ```
-ACE_S^linear  :=  E_{h_c}[ ⟨∇_h LD(h_c), U_V μ̂_ξ⟩ ]
-              =  μ̂_ξ^T · U_V^T · E_{h_c}[∇_h LD(h_c)].
+ACE_S^linear  :=  E_{h_c}[ ⟨∇_h LD(h_c), Δh_c⟩ ]
+              =  μ̂_ξ^T U_V^T E_{h_c}[∇_h LD(h_c)] - E_{h_c}[ h_c^T P_V ∇_h LD(h_c) ].
 ```
 
-Moreover, the magnitude lower bound
+**Simplification under linear-span GM (paper_math.md).** In the
+linear-span case (`M = M_S, V ⊥ M_S`), Assumption GM gives
+`h_c = m_c + ε_c` with `m_c ∈ M_S`, so `P_V m_c = 0` and
+`E[P_V h_c] = E[P_V ε_c] = 0` (zero-mean noise, GM(iii)). The cross
+term in the displacement-norm vanishes in expectation:
 
 ```
-| ACE_S^linear |  ≥  ‖μ̂_ξ‖ · ‖U_V^T E[∇_h LD(h_c)]‖ · cos θ_{ξ, ∇}
+E ‖Δh_c‖²  =  ‖μ̂_ξ‖² + E ‖P_V ε_c‖²  =  ‖μ̂_ξ‖² + r σ²    (isotropic noise)
 ```
 
-holds, where `θ_{ξ, ∇}` is the angle between `μ̂_ξ` and `U_V^T E[∇_h LD(h_c)]`.
+The leading-order linear prediction simplifies to
+`ACE_S^linear = μ̂_ξ^T U_V^T E[∇_h LD(h_c)]` when `∇_h LD(h_c)` is
+uncorrelated with `ε_c` (which holds when `∇_h LD` is approximately
+constant on the noise scale, i.e., when `L · σ √r ≪ ‖∇_h LD‖`).
+
+**Magnitude lower bound: Cauchy–Schwarz is an *equality*, not a lower
+bound.** Cauchy–Schwarz gives the *equality*
+
+```
+| ACE_S^linear |_leading  =  ‖μ̂_ξ‖ · ‖U_V^T E[∇_h LD(h_c)]‖ · |cos θ_{ξ, ∇}|
+```
+
+where `θ_{ξ, ∇}` is the angle between `μ̂_ξ` and
+`U_V^T E[∇_h LD(h_c)]`. This is *not a useful lower bound* by itself —
+Cauchy–Schwarz is sharp only at parallel vectors. To convert it into an
+actual lower bound on the magnitude, we add an explicit alignment
+assumption.
+
+**Alignment Assumption (ALN, paper_math.md eq (9.3)):**
+
+```
+| ⟨μ̂_ξ, U_V^T E[∇_h LD(h_c)]⟩ |  ≥  c_0 · ‖μ̂_ξ‖ · ‖U_V^T E[∇_h LD(h_c)]‖
+```
+
+for a calibration constant `c_0 > 0`. Under (ALN), the magnitude lower
+bound becomes
+
+```
+| ACE_S^linear |_leading  ≥  c_0 · ‖μ̂_ξ‖ · ‖U_V^T E[∇_h LD(h_c)]‖.
+```
+
+(ALN) is empirically testable: estimate both vectors and compute the
+cosine. We pre-register reporting `cos θ̂_{ξ,∇}` alongside the test, with
+threshold `c_0 = 0.3` as the alignment criterion below which the
+magnitude prediction is treated as inconclusive. The previous draft
+presented the Cauchy–Schwarz inequality as a lower bound without the
+alignment assumption — that conflated equality with bound and is fixed
+in this revision.
 
 **Plain interpretation.** Sufficiency strength is the dot product of the
 perturbation magnitude with the model's behavioral sensitivity in the
@@ -2050,17 +2373,21 @@ behavior proportionally to "how much the model's output cares about
 that direction."
 
 **Proof sketch.** Apply Taylor's theorem with integral remainder to
-`LD(h_c + Δh)` with `Δh = U_V μ̂_ξ`:
+`LD(h_c + Δh_c) - LD(h_c)` with `Δh_c = U_V μ̂_ξ - P_V h_c`:
 
 ```
-LD(h_c + Δh) - LD(h_c)
-   = ⟨∇LD(h_c), Δh⟩  +  ∫₀¹ (1-t) ⟨∇²LD(h_c + t Δh) Δh, Δh⟩ dt.
+LD(h_c + Δh_c) - LD(h_c)
+   = ⟨∇LD(h_c), Δh_c⟩  +  ∫₀¹ (1-t) ⟨∇²LD(h_c + t Δh_c) Δh_c, Δh_c⟩ dt.
 ```
 
-Since `‖Δh‖ = ‖μ̂_ξ‖` (orthonormal `U_V`), the integral remainder is
-bounded by `(L/2) ‖μ̂_ξ‖²`. Taking expectations over `h_c` gives the
-Hessian-remainder statement. The magnitude bound is Cauchy–Schwarz
-applied to `⟨μ̂_ξ, U_V^T E[∇LD]⟩`. □
+The squared displacement satisfies
+`‖Δh_c‖² = ‖μ̂_ξ‖² + ‖P_V h_c‖² - 2 μ̂_ξ^T U_V^T P_V h_c`
+(using `U_V^T P_V = U_V^T`, since `P_V = U_V U_V^T` is orthogonal
+projection onto `V`). The integral remainder is bounded by
+`(L/2) ‖Δh_c‖²` pointwise. Taking expectations over `h_c` yields the
+Hessian-remainder statement. The magnitude relation follows from
+Cauchy–Schwarz applied to `⟨μ̂_ξ, U_V^T E[∇LD]⟩` together with the
+alignment assumption (ALN). □
 
 **Smooth-max regularization for argmax flips.** `LD(h) = logit_s(h) -
 max_{t ≠ s} logit_t(h)` is non-smooth at points where the argmax over
@@ -2181,10 +2508,14 @@ criteria.
 
 ### 4.1 Criterion 1: theoretical guarantee
 
-**Parametric (Method 1).** Yu-Wang-Samworth Davis-Kahan applied to OLS
-regression. Clean finite-sample bound:
-`P[sin θ_max ≤ Cσ √(d_m log(d_m / δ) / n_c) / λ_min] ≥ 1 - δ`. Standard
-linear regression theory.
+**Parametric (Method 1).** Operator-norm Wedin (Stewart-Sun 1990
+Theorem 3.6, paper_math.md Lemma 6.4) applied to OLS regression.
+Clean finite-sample bound:
+`P[ sin θ_max ≤ C_3 σ √(κ^B) / (√(λ_min^B) · σ_K(C*)) · √(d_m log(d_m/δ)/n_c) ] ≥ 1 - δ`
+(paper_math.md Theorem 6.2). Standard linear regression theory plus
+matrix Bernstein for `(B^T B)^{-1}` (Tropp 2015). The previous draft
+cited Yu-Wang-Samworth Davis-Kahan, which is the Frobenius form and
+incurs an extra `√K` factor; operator-norm Wedin avoids this.
 
 **Diffusion Maps (Method 4).** Operator-convergence theorem from
 Coifman-Lafon for the embedding step; standard regression theory for the
@@ -2297,11 +2628,15 @@ matrices should match).
 
 **Perturbation orthogonal to tangent.** We assume `ξ ⊥ T_p M`. Tangent
 components of `ξ` are absorbed into a different value of `m_c(a, b)`
-to first order in the curvature of `M`, so this is a labeling
-convention rather than a substantive assumption (the WLOG re-centering
-of paper_math.md Lemma 3.2). The second-order error is absorbed into the
-linearization remainder `R_1 = O(σ² κ_max²)`. The exponential-map rate
-in Lemma 3.2 is open question 1 to Barnábás (paper_math.md §11).
+via the Riemannian exponential map of `M` at `m_c(a, b)`, so this is a
+labeling convention rather than a substantive assumption (the WLOG
+re-centering of paper_math.md Lemma 3.2). The second-order error
+`‖ξ̃ - P^N ξ‖_2 ≤ (1/2) κ_max ‖P^T ξ‖_2²` (note: *quadratic* in the
+tangent component, not linear) is absorbed into the linearization
+remainder `R_1 = O(σ² κ_max²)`. The exponential-map calculation in
+Lemma 3.2 is open question 1 to Barnábás (paper_math.md §11);
+confirmation that the rate is `(1/2) κ_max ‖P^T ξ‖²` (second-order in
+displacement) is sought.
 
 ### 5.2 Assumptions of Theorem 2 that may not hold
 
@@ -2660,10 +2995,12 @@ correction.
 ### 8.16 "Your manifold definition is inconsistent: sometimes 1D curve, sometimes 9D subspace."
 
 Addressed via Section 1.5: we formally distinguish the helix curve `M_C`
-(1D) from the helix span `M_S` (9D ambient subspace). We define `T_curve`
-and `T_span` separately and report both, yielding three structurally
-distinct failure modes (on-curve in-span, off-curve in-span, off-span).
-This is now a feature of the paper, not a confusion.
+(1D) from the helix span `M_S` (m-dim ambient subspace, with `m = 9`
+for continuous inputs and `m = 8` for integer-only inputs after the
+`T = 2` degeneracy fix from paper_math.md Remark 2.2). We define
+`T_curve` and `T_span` separately and report both, yielding three
+structurally distinct failure modes (on-curve in-span, off-curve in-span,
+off-span). This is now a feature of the paper, not a confusion.
 
 ### 8.17 "The 5,050-sample claim looks like (100·101)/2, not a tokenizer count."
 
@@ -2675,16 +3012,32 @@ robustness check in Appendix G.
 
 ### 8.18 "Theorem 2's rate has factor-r vs factor-r² ambiguity."
 
-We have re-derived Theorem 2 with a single consistent rate of
+We have re-derived Theorem 2 with a single consistent achievable rate of
 `O(r σ⁴ / Δ⁴ · log(1/β))`, linear (not quadratic) in `r`. The
 corresponding sample-complexity reduction over the unprojected test is
 `(d_m - dim(M)) / r`, e.g., `~4088×` for `d_m = 4096, dim(M_S) = 8`
 (with the `T = 2` identifiability correction from
 [paper_math.md Remark 2.2](paper_math.md)) and `r = 1`. We do not
-claim quadratic speedups, and the **minimax lower bound** in
-Theorem 2(b) ([paper_math.md Theorem 5.2(b)](paper_math.md)) confirms
-this rate is tight up to absolute constants — no test can do better
-in the `r σ⁴ / Δ⁴` regime.
+claim quadratic speedups.
+
+**Status of the lower bound.** We prove only the *two-point Le Cam*
+lower bound at rate `σ²/Δ²` ([paper_math.md Theorem 5.2(b), eq (5.2a)](paper_math.md)):
+any test with size `α` and uniform power `1 - β` over the alternative
+class requires `n ≥ C_2^LC · σ²/Δ² · log(1/(β(1-α)))`. This proven
+bound does *not* match the achievable `r σ⁴/Δ⁴` rate; it is weaker by
+a factor of `r σ² / Δ²`. The conjectured matching rate (5.2b),
+`n ≥ C_2 · r σ⁴/Δ⁴ · log(...)`, would close the gap and is the
+standard Ingster-style minimax separation rate established for the
+Gaussian sequence model (Ingster 1993, 2003; Baraud 2002;
+Collier–Comminges–Tsybakov 2017) via a chi-squared mixture over a
+packing of `S^{r-1}(Δ)`. We do *not* prove it in this submission; we
+treat it as a conjecture pending follow-up work
+([paper_math.md §5.6 and §11 item 4](paper_math.md)). An earlier
+draft sketched a "Fano chaining" argument that would have given the
+matching rate; on closer reading the sketch was incoherent and has
+been removed. The BlackboxNLP submission presents only (b) as proven
+and (b') as conjectural, with the achievability bound (a) as the
+operationally relevant rate.
 
 ### 8.19 "Theorem 1's concentration bound looks dimension-free, but the residual lives in a k-dimensional space."
 
@@ -2829,10 +3182,18 @@ scope statement.
 
 ### 9.9 Appendix (no length limit)
 
-- A. Full proof of Theorem 1 with anisotropic noise extension.
-- B. Full proof of Theorem 2 with corrected linear-in-r rate.
-- C. Full proof of Theorem 3 (parametric M̂ recovery via Yu-Wang-Samworth).
-- D. Full proof of Proposition 4 with first-order Taylor analysis.
+- A. Full proof of Theorem 1 (validity & concentration) with the
+  anisotropic Hanson–Wright extension (Theorem 4.10).
+- B. Full proof of Theorem 2: achievability (a) at rate `r σ⁴/Δ⁴`,
+  proven two-point Le Cam lower bound (b) at rate `σ²/Δ²`, exact null
+  (c). The matching minimax `r σ⁴/Δ⁴` lower bound (b') is presented
+  as a conjecture with a pointer to Ingster's chi-squared mixture
+  argument; not proven in this submission.
+- C. Full proof of Theorem 3 (parametric M̂ recovery via operator-norm
+  Wedin / Stewart–Sun 1990).
+- D. Full proof of Proposition 4 with first-order Taylor analysis,
+  the corrected displacement `Δh = U_V μ̂_ξ - P_V h_c`, and the
+  Alignment Assumption (ALN) for the magnitude lower bound.
 - E. Diffusion Maps and Kernel PCA recovery (informal rate analysis).
 - F. Manifold-construction sensitivity ablation across `(model, layer)`.
 - G. Multi-token sum robustness check (10,000 → 5,050 unordered subset).
@@ -3072,7 +3433,8 @@ the external references each proof depends on.
 | Section 2.1 Theorem 1(a)–(d) | §4 Lemma 4.3 / 4.5 / 4.7 / 4.8 | Linearization, mean, sub-exp, mean conc. |
 | Section 2.3–2.4 Theorem 2 | §5, Theorem 5.2 | Localization power |
 | Section 2.3 Theorem 2(a) achievability | §5.5 | Upper bound |
-| Section 2.3 Theorem 2(b) minimax lower | §5.6, Lemmas 5.5–5.6 | Le Cam + Fano chaining |
+| Section 2.3 Theorem 2(b) two-point lower (proven) | §5.6, Lemmas 5.5–5.6 | Le Cam two-point at σ²/Δ² rate |
+| Section 2.3 Theorem 2(b') matching rate (conjecture) | §5.6 prose, Ingster-style | rσ⁴/Δ⁴ via chi-squared mixture (not proven) |
 | Section 2.3 Theorem 2(c) exact null | §5.7 | χ² difference distribution |
 | Section 2.5 Theorem 3 | §6, Theorem 6.2 | Manifold recovery (parametric) |
 | Section 2.5 OLS bound | §6.3, Lemma 6.3 | Op-norm OLS concentration |
@@ -3108,9 +3470,15 @@ The same citations appear in the appendix of the eventual paper.
 
 **Theorem 2 (localization power).**
 
-- Tsybakov 2009, *Introduction to Nonparametric Estimation*, Theorems 2.2
-  and 2.7. Le Cam two-point and Fano chaining.
-- Wainwright 2019, Chapter 15. The Fano-mixture chi-squared rate.
+- Tsybakov 2009, *Introduction to Nonparametric Estimation*, Theorem 2.2.
+  Le Cam two-point lemma (used for the proven (b) at rate σ²/Δ²).
+- Ingster 1993; Ingster–Suslina 2003 (Springer LNS 169). Asymptotic
+  minimax separation in Gaussian sequence — template for the conjectured
+  matching rate (b').
+- Baraud 2002, *Bernoulli* 8(5):577–606. Non-asymptotic minimax rates of
+  testing in signal detection.
+- Collier–Comminges–Tsybakov 2017, *Annals of Statistics* 45(3):923–958.
+  Finite-sample chi-squared mixture argument.
 - Romano–Wolf 2005, *Econometrica* 73(4):1237–1282. Step-down maxT for
   adaptive `V`.
 - Davies 1980, *Applied Statistics* 29(3):323–333. Generalized

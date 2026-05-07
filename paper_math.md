@@ -10,7 +10,9 @@ This document is a mathematical proposal. It lays out the problem we want to stu
 
 We are sharing this in advance of running the empirical pipeline on GPT-J 6B, Pythia 6.9B, and Llama 3.1 8B (target venue: BlackboxNLP 2026, direct submission deadline July 17, 2026), so that the math can be reviewed and tightened in parallel with the experimental work rather than after. We flag every place where we are uncertain about the statement, the proof structure, or the constants. Section 11 collects these into a list of open questions we would like your input on.
 
-The technical content we propose: (1) a non-asymptotic concentration bound for an off-manifold residual statistic, (2) a localized version with a power upper bound and a matching minimax lower bound via Le Cam chaining, (3) a finite-sample manifold-recovery bound for the parametric estimator with operator-norm Wedin and an explicit misspecification term, (4) a cross-fitting protocol with Neyman-orthogonal influence function, (5) exact conditional validity of a stratified permutation null, (6) a causal proposition with Hessian-controlled second-order Taylor remainder.
+The technical content we propose: (1) a non-asymptotic concentration bound for an off-manifold residual statistic, with anisotropic-noise generalization (Theorem 4.10); (2) a localized version with a power upper bound and a *two-point Le Cam* lower bound — the matching $r\sigma^4/\Delta^4$ minimax rate is downgraded to a conjecture pending an Ingster-style chi-squared mixture argument; (3) a finite-sample manifold-recovery bound for the parametric estimator with operator-norm Wedin and an explicit misspecification term; (4) a cross-fitting protocol with explicit Neyman-orthogonal influence function and Gateaux-derivative verification; (5) exact conditional validity of a stratified permutation null in the Lehmann–Romano / Freedman–Lane / Anderson–Robinson framework; (6) a causal proposition with Hessian-controlled second-order Taylor remainder.
+
+A note on scope: an earlier draft attempted a Fano-chaining proof of the matching minimax lower bound; this draft removes that argument as incoherent and presents only the two-point bound as proven, with the matching rate flagged as conjectural. The localized-test assumption $V \subseteq \bigcap_p N_p M$, which is unrealistic for a curved manifold, is also relaxed in this draft to an explicit normal-frame drift bound $\eta_0$ that is empirically verifiable.
 
 We would value your feedback on whether the proof structures are sound, where the constants can be tightened, and where the assumptions can be relaxed. We expect to revise this document substantially based on your comments before any of it appears in the BlackboxNLP submission.
 
@@ -32,17 +34,17 @@ For a fixed model, $h(a, b)$ is a deterministic function of $(a, b)$ because the
 
 ### 1.2 Correct and wrong populations
 
-Define the correctness label
+Define the correctness label. Let $\tau: \{0, 1, \dots, 198\} \to \mathcal{V}$ be the (fixed, model-specific) tokenization map sending an integer answer $s$ to the token id used by the model to represent the decimal-string of $s$ as the immediate next token after the equals sign (under our prompt template; see Appendix H of the main paper for tokenizer-audit details and the handful of multi-token cases we exclude). Let $\mathrm{logit}^{\mathrm{final}}_{t}(a, b)$ denote the logit assigned to vocabulary token $t \in \mathcal{V}$ at the answer position by the *final-layer* output of the model (i.e., after the unembedding map applied to the last residual stream), not by a logit-lens at the analysis layer $\ell^*$. Then
 
 $$
 y(a, b) =
 \begin{cases}
-1 & \text{if } \arg\max_{t} \mathrm{logit}_{t}(h(a, b)) = s, \\
+1 & \text{if } \arg\max_{t \in \mathcal{V}} \mathrm{logit}^{\mathrm{final}}_{t}(a, b) = \tau(s), \\
 0 & \text{otherwise.}
 \end{cases}
 $$
 
-We refer to the set $\{(a, b) : y(a, b) = 1\}$ as the *correct population* and to $\{(a, b) : y(a, b) = 0\}$ as the *wrong population*.
+We refer to the set $\{(a, b) : y(a, b) = 1\}$ as the *correct population* and to $\{(a, b) : y(a, b) = 0\}$ as the *wrong population*. The correctness label is determined by the model's actual greedy decoding behavior at temperature $0$, not by an intermediate-layer probe; the analysis layer $\ell^*$ is only the layer at which we extract activations $h$ for residual computation.
 
 We collect $n_c$ activations from the correct population into a matrix $H_c \in \mathbb{R}^{n_c \times d}$ (one activation per row) and $n_w$ activations from the wrong population into a matrix $H_w \in \mathbb{R}^{n_w \times d}$. The integer $n_c$ depends on the model (approximately $80.5\%$ of $10{,}000$ ordered pairs for GPT-J, $77.2\%$ for Pythia, $98\%$ for Llama, per Kantamneni–Tegmark 2025 Table 2; the per-model retained counts after tokenizer audit are reported empirically in Appendix H of the main paper).
 
@@ -151,8 +153,8 @@ $$
 
 The three failure modes are characterized by the relative magnitudes of $\|r_{S}(h)\|$ and $\|r_{\mathrm{within}}(h)\|$:
 
-(a) *On-curve, in-span*: both small. $h$ lies on $M_{C}$ at a nearby integer.
-(b) *Off-curve, in-span*: $\|r_{\mathrm{within}}(h)\|$ large, $\|r_{S}(h)\|$ small. $h$ lies in $M_{S}$ but at a non-integer parameter value.
+(a) *On-curve, in-span*: both small. $h$ lies near $M_{C}$, projecting close to a valid integer-labeled point $g(t^*)$ on the curve.
+(b) *In-span but off-curve*: $\|r_{\mathrm{within}}(h)\|$ large, $\|r_{S}(h)\|$ small. $h$ lies (approximately) in $M_{S}$ but its helix coordinates do not match $g(t^*)$ for any $t^* \in [0, A]$ — that is, $h$ uses linear combinations of the helix-basis directions that are inconsistent with the parametric curve. (Equivalently: there is no $t^*$ such that $h \approx g(t^*)$, even though $h$ projects cleanly onto $S$.)
 (c) *Off-span*: $\|r_{S}(h)\|$ large. $h$ has departed $M_{S}$.
 
 **Lemma 2.7 (Pythagorean residual decomposition).**
@@ -200,18 +202,32 @@ where:
 (iii) $\{\varepsilon_{p}^{(i)}\}_{i}$ are independent zero-mean sub-Gaussian random vectors with covariance $\Sigma_{\varepsilon}$ and Orlicz $\psi_{2}$-norm at most $\sigma$: $\|\langle u, \varepsilon\rangle\|_{\psi_{2}} \leq \sigma \|u\|_{2}$ for all $u \in \mathbb{R}^{d}$;
 (iv) $\{\xi(a, b)\}$ are independent of $\varepsilon$, with mean $\mu_{\xi} \in \mathbb{R}^{d}$ and covariance $\Sigma_{\xi}$, and i.i.d. across $(a, b)$ in the wrong population.
 
-**Lemma 3.2 (Without-loss-of-generality re-centering of $\xi$).**
-Let $\xi(a, b) \in \mathbb{R}^{d}$ be any perturbation. Decompose $\xi = P^T_{m_{c}(a,b)} \xi + P^N_{m_{c}(a,b)} \xi$, and define
+**Lemma 3.2 (Without-loss-of-generality re-centering of $\xi$ via the exponential map).**
+Let $p := m_{c}(a, b) \in M$ and $\xi(a, b) \in \mathbb{R}^{d}$ be any perturbation with $\|\xi\|_2 < \tau(M)/2$. Decompose $\xi = P^T_p \xi + P^N_p \xi$ and define the re-centered base point and re-centered residual via the exponential map of $M$ at $p$:
 
 $$
-\widetilde{m}_{c}(a, b) := m_{c}(a, b) + P^T_{m_{c}(a,b)} \xi(a, b),
+\widetilde{m}_{c}(a, b) := \exp_p\bigl(P^T_p \xi(a, b)\bigr) \in M,
 \quad
-\widetilde{\xi}(a, b) := P^N_{\widetilde{m}_{c}(a, b)} \xi(a, b).
+\widetilde{\xi}(a, b) := \xi(a, b) - \bigl(\widetilde{m}_c(a, b) - p\bigr).
 $$
 
-Then to first order in the curvature of $M$ at $m_{c}(a, b)$ we have $\widetilde{m}_{c}(a, b) \in M$ and $\widetilde{\xi}(a, b) \in N_{\widetilde{m}_{c}(a, b)} M$.
+(Here $\exp_p: T_p M \to M$ is the Riemannian exponential map of the embedded submanifold $M$, which sends a tangent vector $v \in T_p M$ to the point on $M$ obtained by following the geodesic from $p$ in direction $v$ for unit time. For a 1D curve $M_C$ with arc-length parameterization, $\exp_{g(t)}(c \cdot g'(t)/\|g'(t)\|) = g(t + c)$.)
 
-*Proof outline.* The tangent component $P^T_{m_{c}(a,b)} \xi$ moves $m_{c}$ along $M$ at linear rate $1 + O(\kappa \cdot \|P^T \xi\|)$, where $\kappa$ is the local sectional curvature. Hence to first order $\widetilde{m}_{c} \in M$. The remaining component $\widetilde{\xi}$ is in the normal space at the new base point. The second-order correction is absorbed into the linearization error of Section 4.3 below. We have not written out the exponential-map calculation rigorously; this is a place where Barnábás's input would help confirm the rate. ∎
+Then $\widetilde{m}_{c}(a, b) \in M$ exactly (by definition of the exponential map), and
+
+$$
+\bigl\|\widetilde{\xi}(a, b) - P^N_p \xi(a, b)\bigr\|_2 \;\leq\; \tfrac{1}{2}\,\kappa_{\max}\, \|P^T_p \xi\|_2^2.
+$$
+
+In particular, $\widetilde{\xi}(a, b)$ differs from the normal component $P^N_p \xi$ by a curvature-controlled second-order term, and $\widetilde{\xi}(a, b) \in N_{\widetilde{m}_c(a,b)} M$ to first order in $\kappa_{\max} \|P^T_p \xi\|$.
+
+*Proof outline.* The exponential map satisfies $\exp_p(v) = p + v + \tfrac{1}{2} II_p(v, v) + O(\kappa^2 \|v\|^3)$ where $II_p$ is the second fundamental form taking values in $N_p M$ (Lee, *Introduction to Riemannian Manifolds* 2018, Proposition 5.19). Substituting $v = P^T_p \xi$ and using $\|II_p\|_{\mathrm{op}} \leq \kappa_{\max}$ gives
+
+$$
+\widetilde{m}_c - p = P^T_p \xi + \tfrac{1}{2} II_p(P^T_p \xi, P^T_p \xi) + O(\kappa_{\max}^2 \|P^T_p \xi\|^3).
+$$
+
+Then $\widetilde{\xi} = \xi - (\widetilde{m}_c - p) = P^N_p \xi - \tfrac{1}{2} II_p(P^T_p\xi, P^T_p\xi) + O(\kappa_{\max}^2 \|P^T_p \xi\|^3)$. The second fundamental form value $II_p(\cdot, \cdot)$ lies in $N_p M$, so $\widetilde{\xi}$ is a normal-bundle vector to first order; the remaining $O(\kappa_{\max}^2 \|P^T_p \xi\|^3)$ correction is absorbed into the linearization error of §4.3. ∎
 
 **Remark 3.3 (Same noise across populations).**
 Assumption GM(iii) requires $\Sigma_{\varepsilon}$ to be the same for correct and wrong populations. This is realistic for activation noise driven by within-prompt token variation, but may fail if the wrong population is drawn from a categorically different prompt distribution. We address relaxation of this assumption in Section 4 Remark 4.9.
@@ -221,14 +237,29 @@ Assumption GM(iii) requires $\Sigma_{\varepsilon}$ to be the same for correct an
 **Assumption 3.4 (BD, boundedness).**
 There exists $D_{\max} < \infty$ (depending on the model and layer) such that, with probability at least $1 - \delta$ over the noise, $\|h_{c}^{(i)}\|_{2} \leq D_{\max}$ for every correct activation in the analysis sample, and similarly for wrong activations.
 
-For sub-Gaussian noise with parameter $\sigma$ and a clean signal $m_{p}(a, b)$ uniformly bounded on a compact $M$, standard sub-Gaussian maximal inequalities give $D_{\max} = O(\|m_{p}\|_{\infty} + \sigma \sqrt{d + \log(1/\delta)})$ with probability $1 - \delta$. For activations after layer normalization, $D_{\max} = O(\sqrt{d})$ typically.
+For sub-Gaussian noise with parameter $\sigma$ and a clean signal $m_{p}(a, b)$ uniformly bounded on a compact $M$ by $\|m_p\|_\infty$, the standard sub-Gaussian maximal inequality over $n$ samples gives, with probability at least $1 - \delta$,
+
+$$
+D_{\max} \;=\; \|m_p\|_\infty + \sigma\bigl(\sqrt{d} + \sqrt{\log(n/\delta)}\bigr).
+$$
+
+The two terms have different origins: $\sigma \sqrt{d}$ is the typical Euclidean norm of an isotropic $d$-dimensional sub-Gaussian vector (from $\mathbb{E}\|\varepsilon\|^2 = O(d \sigma^2)$), and $\sigma \sqrt{\log(n/\delta)}$ is the maximum-over-$n$-samples penalty (sub-Gaussian maximal inequality). Combining them under a single square root, as in $\sigma \sqrt{d + \log(1/\delta)}$, conflates the two regimes and is wrong when $n \gg 1$. For activations after layer normalization, $\|m_p\|_\infty = O(\sqrt{d})$ typically, giving $D_{\max} = O(\sqrt{d} + \sigma \sqrt{\log(n/\delta)})$.
 
 ### 3.2 Regularity assumption on the manifold
 
 **Assumption 3.5 (REG, regularity).**
-There exist $\tau_{\min} > 0$ and $\kappa_{\max} < \infty$ such that $\tau(M) \geq \tau_{\min}$ uniformly and the maximum sectional curvature of $M$ is bounded by $\kappa_{\max}$ at every point of the data support. Moreover $\sigma \cdot \kappa_{\max} \leq c_{0}$ for a small absolute constant $c_{0} \in (0, 1]$.
+There exist $\tau_{\min} > 0$ and $\kappa_{\max} < \infty$ such that $\tau(M) \geq \tau_{\min}$ uniformly and the maximum extrinsic curvature (operator norm of the second fundamental form $\|II_p\|_{\mathrm{op}}$) of $M$ is bounded by $\kappa_{\max}$ at every point of the data support. Moreover $\sigma \cdot \kappa_{\max} \leq c_{0}$ for a small absolute constant $c_{0} \in (0, 1]$.
 
 The condition $\sigma \kappa_{\max} \leq c_{0}$ ensures that the typical noise displacement is small relative to the manifold's curvature scale, so the linearization of Section 4.3 is valid. We verify this empirically per model and layer before running the main experiments.
+
+**Remark 3.6 (Empirical diagnostics for REG and the common-normal-bundle assumption).**
+Both the reach lower bound $\tau(M) \geq \tau_{\min}$ and the curvature upper bound $\|II_p\|_{\mathrm{op}} \leq \kappa_{\max}$ are not directly observable but can be estimated from the correct-population activations:
+
+- *Reach lower bound:* compute $\widehat\tau \geq \min_{i \neq j} \tfrac{\|h_c^{(i)} - h_c^{(j)}\|^2}{2 \cdot d(h_c^{(i)} - h_c^{(j)}, T_{p_j} M)}$ over a sample of pairs $(i, j)$, where $T_{p_j} M$ is estimated from local PCA at $p_j = h_c^{(j)}$. This is the Aamari–Levrard [aamari2019] reach estimator, consistent up to lower-order terms in $n_c$.
+- *Curvature upper bound:* compute $\widehat\kappa_{\max}$ as the maximum operator norm of the local Hessian of the parametric helix curve, $\widehat{II}_p \approx -g''(t)$ at integer $t$ where $g(t)$ is from Definition 2.1. Closed form: $\|II\|_{\mathrm{op}} = \max_t \sup_{u \perp g'(t), \|u\|=1} |\langle u, g''(t)\rangle|$.
+- *Common-normal-bundle drift $\eta$ for Theorem 5.2(C):* sample $\{p_k\}_{k=1}^K \subset M$, estimate $P^N_{p_k}$ from local PCA, and compute $\widehat\eta = \max_{k} \|P_V (P^N_{p_k} - P^N_{p_0}) P_V\|_{\mathrm{op}}$ for the chosen $V$ and a reference $p_0$.
+
+We pre-register reporting $\widehat\tau, \widehat\kappa_{\max}, \widehat\sigma_{\mathrm{eff}}, \widehat\eta$ for each (model, layer) pair before computing the test statistic, and treat the test as conditional on the joint event that $\widehat\sigma_{\mathrm{eff}} \widehat\kappa_{\max} \leq c_0$ (the small-noise regime) and $\widehat\eta \leq \eta_0$. Layers failing these diagnostics are excluded from the analysis.
 
 ---
 
@@ -260,9 +291,9 @@ $$
 + R_{1}(\sigma, \kappa_{\max}),
 $$
 
-where $R_{1}(\sigma, \kappa_{\max}) = O(\sigma^{2} \kappa_{\max}^{2})$ is a linearization-error term that vanishes when $M$ is linear.
+where $R_{1}(\sigma, \kappa_{\max}) = O(\sigma^{2} \kappa_{\max}^{2})$ is a linearization-error term that vanishes when $M$ is linear. The mean of $T_n$ depends only on the perturbation $\xi$, not on the noise $\varepsilon$: under Assumption GM(iii) the two populations share $\Sigma_\varepsilon$, so the noise traces $\mathrm{tr}(P^N \Sigma_\varepsilon P^N)$ cancel exactly across the difference $\bar{Y}_w - \bar{Y}_c$ (see Corollary 4.6 below; Remark 4.9 handles the case $\Sigma_\varepsilon^c \neq \Sigma_\varepsilon^w$).
 
-(b) **Null behavior.** Under $H_{0}: \mu_{\xi} = 0$ and $\Sigma_{\xi} = 0$, $\mathbb{E}[T_{n}] = R_{1}(\sigma, \kappa_{\max})$ which is identically zero when $M$ is linear and $O(\sigma^{2} \kappa_{\max}^{2})$ in general.
+(b) **Null behavior.** Define $H_{0}: \mu_{\xi} = 0$ and $\Sigma_{\xi} = 0$ — equivalently, $\xi(a, b) \equiv 0$, so the wrong-population signal coincides with the correct-population signal in distribution. Under $H_0$, $\mathbb{E}[T_{n}] = R_{1}(\sigma, \kappa_{\max})$ which is identically zero when $M$ is linear and $O(\sigma^{2} \kappa_{\max}^{2})$ in general. We emphasize that the null is a statement about the perturbation $\xi$ being zero, not about the noise $\varepsilon$: the ε-contribution to $\mathbb{E}[T_n]$ cancels regardless of whether $\xi$ vanishes.
 
 (c) **Non-asymptotic concentration.** For every $t > 0$,
 
@@ -286,39 +317,40 @@ The remainder of this section gives our proposed proof outline for Theorem 4.2. 
 
 ### 4.3 Step 1: linearization of $\Pi_{M}$
 
-**Lemma 4.3 (Tubular-neighborhood projection — proposed).**
-Let $p \in M$ and $\delta \in \mathbb{R}^{d}$ with $\|\delta\|_{2} < \tau(M) / 2$. We propose
+**Lemma 4.3 (Tubular-neighborhood projection — proposed, explicit form).**
+Let $M \subset \mathbb{R}^d$ be a smooth submanifold with reach $\tau(M) \geq \tau_{\min} > 0$ and second-fundamental-form bound $\sup_{p \in M} \|II_p\|_{\mathrm{op}} \leq \kappa_{\max}$. Let $p \in M$ and $\delta \in \mathbb{R}^{d}$ with $\|\delta\|_{2} < \tau_{\min} / 2$. Decompose $\delta = P^T_p \delta + P^N_p \delta$ (tangent and normal components). Then
 
 $$
 \Pi_{M}(p + \delta) = p + P^T_{p} \delta + R_{2}(\delta, p),
 \quad
-\|R_{2}(\delta, p)\|_{2} \leq \frac{\kappa_{\max}}{2} \|P^N_{p} \delta\|_{2}^{2}. \tag{4.3}
+\|R_{2}(\delta, p)\|_{2}
+\;\leq\;
+\frac{\kappa_{\max}}{2(1 - \kappa_{\max}\|P^N_p \delta\|_2)} \|P^N_{p} \delta\|_{2}^{2}, \tag{4.3a}
 $$
+
+provided $\kappa_{\max} \|P^N_p \delta\|_2 < 1$ (which holds whenever $\|\delta\|_2 \leq \tau_{\min}/2$ since $\tau_{\min} \leq 1/\kappa_{\max}$ locally). Equivalently, in the small-noise regime $\sigma \kappa_{\max} \leq c_0 < 1$ of Assumption REG,
+
+$$
+\|R_{2}(\delta, p)\|_2 \;\leq\; \frac{\kappa_{\max}}{2(1 - c_0)} \|P^N_p \delta\|_2^2. \tag{4.3b}
+$$
+
+The factor $\|P^N_p \delta\|_2^2$ rather than $\|\delta\|_2^2$ is essential: the tangent component $P^T_p \delta$ is a first-order motion along $M$ and contributes only $O(\kappa_{\max}^2 \|P^T_p \delta\|^3)$ to the second-order remainder, which is one order of magnitude smaller than the normal-component contribution.
 
 Consequently the residual at $h = p + \delta$ should satisfy
 
 $$
 r(h) = P^N_{p} \delta - R_{2}(\delta, p),
+\quad
+\|r(h) - P^N_p \delta\|_2 \;\leq\; \tfrac{\kappa_{\max}}{2(1 - c_0)} \|P^N_p \delta\|_2^2. \tag{4.3c}
 $$
 
-with the same bound on $R_{2}$.
-
-*Proof outline.* Federer [federer1959] proved that for $x$ within reach, the closest-point projection $\Pi_{M}$ is $C^{1}$ on $\mathbb{R}^{d} \setminus M$ with derivative
+*Proof outline.* This is the standard tubular-neighborhood estimate for embedded $C^2$ submanifolds with positive reach. Federer [federer1959] §4.18 establishes that $\Pi_M$ is $C^{1, 1}$ on the open tube $\{x : d(x, M) < \tau(M)\}$. The derivative at $p$ is $D \Pi_M(p) = P^T_p$ and the Hessian (in directions normal to $M$) is bounded by the second fundamental form. Niyogi–Smale–Weinberger [niyogi2008] Lemma 4.1 gives the precise Taylor remainder for normal perturbations:
 
 $$
-D \Pi_{M}(p + \delta) = P^T_{p + O(\delta)}.
+\Pi_M(p + \delta_N) - p - P^T_p \delta_N \cdot 0 = -\tfrac{1}{2} II_p(\delta_N, \delta_N) + O(\kappa_{\max}^2 \|\delta_N\|^3),
 $$
 
-Differentiating once more gives the second fundamental form of $M$ at $p$, whose operator norm is bounded by $\kappa_{\max}$. By Taylor's theorem with integral remainder,
-
-$$
-\Pi_{M}(p + \delta) - p - P^T_{p} \delta
-= \int_{0}^{1} (1 - s) D^{2} \Pi_{M}(p + s \delta)[\delta, \delta] \, ds.
-$$
-
-The second derivative is bounded in operator norm by $\kappa_{\max}$, giving $\|R_{2}\|_{2} \leq \tfrac{1}{2} \kappa_{\max} \|\delta\|_{2}^{2}$. The factor of $\|P^N_{p} \delta\|_{2}^{2}$ in place of $\|\delta\|_{2}^{2}$ comes from the fact that the tangent component is a free first-order motion along $M$, contributing zero to the second-order remainder; this is the standard tubular-neighborhood estimate (Niyogi–Smale–Weinberger [niyogi2008]).
-
-*We are not fully sure the second-fundamental-form bound is sharp at the constant $1/2$; Federer's original bound is in this form but we have not verified Niyogi–Smale–Weinberger's reformulation matches.* ∎
+where $\delta_N := P^N_p \delta$ and $II_p(\cdot, \cdot)$ is the second fundamental form, an $\mathbb{R}^d$-valued symmetric bilinear form on $T_p M$ whose values lie in $N_p M$. The operator-norm bound $\|II_p\|_{\mathrm{op}} \leq \kappa_{\max}$ then gives the leading-order $\tfrac{1}{2}\kappa_{\max} \|\delta_N\|^2$ bound. The denominator $(1 - c_0)$ in (4.3b) is the standard refinement that absorbs the higher-order terms inside the tube; see Aamari–Levrard [aamari2019] Proposition A.1 for an explicit modern statement. The tangent component contributes no second-order term because $\Pi_M(p + P^T_p \delta) = p + P^T_p \delta + O(\kappa_{\max}^2 \|P^T_p\delta\|^3)$ — it stays on the manifold to within third order. ∎
 
 **Corollary 4.4 (Proposed: residual under Assumption GM).**
 Under Assumption 3.1 with $h_{c} = m_{c}(a, b) + \varepsilon_{c}$,
@@ -449,25 +481,65 @@ $$
 
 The last term is a noise-distribution mismatch and can be bounded by $k \cdot \|\Sigma_{\varepsilon}^{w} - \Sigma_{\varepsilon}^{c}\|_{\mathrm{op}}$. We test for this empirically by comparing residual covariance matrices between correct and wrong populations and reporting the bound.
 
-**Remark 4.10 (Anisotropic effective dimension).**
-For anisotropic $\Sigma_{\varepsilon}$, the chi-squared variance $2 k \sigma^{4}$ in Theorem 4.2 is replaced by $2 \mathrm{tr}((P^N \Sigma_{\varepsilon})^{2})$ (Magnus–Neudecker [magnus1999] Theorem 11.21). Define the *effective rank* of the residual covariance:
+**Theorem 4.10 (Proposed: anisotropic version of Theorem 4.2).**
+Replace the isotropic-noise hypothesis $\Sigma_\varepsilon = \sigma^2 I$ in Theorem 4.2 by an arbitrary positive-semidefinite $\Sigma_\varepsilon$ with $\|\Sigma_\varepsilon\|_{\mathrm{op}} \leq \sigma_{\mathrm{op}}^2$. Define the *effective normal-bundle rank* and *effective normal-bundle scale*:
 
 $$
-k_{\mathrm{eff}} := \frac{(\mathrm{tr}(P^N \Sigma_{\varepsilon}))^{2}}{\mathrm{tr}((P^N \Sigma_{\varepsilon})^{2})}.
+k_{\mathrm{eff}} := \frac{(\mathrm{tr}(P^N \Sigma_{\varepsilon}))^{2}}{\mathrm{tr}((P^N \Sigma_{\varepsilon})^{2})},
+\quad
+\sigma_{\mathrm{eff}}^2 := \frac{\mathrm{tr}(P^N \Sigma_\varepsilon)}{k_{\mathrm{eff}}} = \frac{\mathrm{tr}((P^N \Sigma_\varepsilon)^2)}{\mathrm{tr}(P^N \Sigma_\varepsilon)}.
 $$
 
-For isotropic $\Sigma_{\varepsilon} = \sigma^{2} I$, $k_{\mathrm{eff}} = k$. For strongly anisotropic noise (e.g., low-rank covariance), $k_{\mathrm{eff}} \ll k$. Theorem 4.2 continues to hold with $k$ replaced by $k_{\mathrm{eff}}$ throughout, giving sharper bounds when noise is concentrated.
+For isotropic $\Sigma_{\varepsilon} = \sigma^{2} I$, $k_{\mathrm{eff}} = k$ and $\sigma_{\mathrm{eff}}^2 = \sigma^2$. Then we propose:
+
+(a') **Population mean.** Same as Theorem 4.2(a), since the noise traces $\mathrm{tr}(P^N \Sigma_\varepsilon P^N)$ cancel exactly across populations under GM(iii) regardless of anisotropy.
+
+(c') **Non-asymptotic concentration.** For every $u > 0$ and $n_c = n_w = n$,
+
+$$
+\mathbb{P}\!\left[T_n - \mathbb{E}[T_n] \geq 2 \sigma_{\mathrm{eff}}^2 \sqrt{\tfrac{2 k_{\mathrm{eff}} u}{n}} + \tfrac{2 \sigma_{\mathrm{op}}^2 u}{n}\right] \leq 2 e^{-u}, \tag{4.7}
+$$
+
+with the same bound for the lower tail.
+
+*Proof outline.* Apply the Hanson–Wright inequality (Vershynin [vershynin2018] Theorem 6.2.1) directly to the centered quadratic form $\|P^N \varepsilon\|_2^2 - \mathrm{tr}(P^N \Sigma_\varepsilon)$ with $\varepsilon$ sub-Gaussian: there exist absolute constants $c_1, c_2$ such that
+
+$$
+\mathbb{P}\!\bigl[\bigl|\|P^N \varepsilon\|_2^2 - \mathrm{tr}(P^N \Sigma_\varepsilon)\bigr| > t\bigr]
+\;\leq\;
+2 \exp\!\Bigl(- c_1 \min\!\bigl(\tfrac{t^2}{\mathrm{tr}((P^N \Sigma_\varepsilon)^2)}, \tfrac{t}{\|P^N \Sigma_\varepsilon\|_{\mathrm{op}}}\bigr)\Bigr).
+$$
+
+Equivalently, the centered statistic is sub-exponential with parameters $(\nu, \alpha) = (2\sqrt{\mathrm{tr}((P^N \Sigma_\varepsilon)^2)}, 2 \|P^N \Sigma_\varepsilon\|_{\mathrm{op}})$ — no $\Sigma_\varepsilon^{-1/2}$ rescaling is needed (and would not be defined when $\Sigma_\varepsilon$ is singular). Substituting $\nu^2 = 4 k_{\mathrm{eff}} \sigma_{\mathrm{eff}}^4$ and $\alpha = 2 \sigma_{\mathrm{op}}^2$ where $\sigma_{\mathrm{op}}^2 := \|P^N \Sigma_\varepsilon\|_{\mathrm{op}}$, then averaging over $n$ samples and applying Bernstein-MGF as in Lemma 4.8, gives (4.7).
+
+**Estimating $k_{\mathrm{eff}}$ from data.** A consistent estimator from the correct population alone is
+
+$$
+\widehat{k}_{\mathrm{eff}} := \frac{(\mathrm{tr}(\widehat{\Sigma}_r))^2}{\mathrm{tr}(\widehat{\Sigma}_r^2)},
+\quad
+\widehat{\Sigma}_r := \frac{1}{n_c} \sum_{i=1}^{n_c} r(h_c^{(i)}) r(h_c^{(i)})^\top,
+$$
+
+the empirical normal-bundle residual covariance restricted to $V$ (or to the full normal bundle for the global test). Concentration of $\widehat{k}_{\mathrm{eff}}$ to $k_{\mathrm{eff}}$ at rate $O(\sqrt{k/n_c})$ follows from standard sample-covariance concentration (Vershynin [vershynin2018] Section 4.7).
+
+**Remark.** Real activations after layer normalization are unlikely to be isotropic. We will report $\widehat{k}_{\mathrm{eff}}$ alongside the test statistic and use Theorem 4.10 rather than Theorem 4.2 for calibration. Theorem 5.2's localized bounds extend analogously with $r$ replaced by $r_{\mathrm{eff}} := (\mathrm{tr}(P_V P^N \Sigma_\varepsilon))^2 / \mathrm{tr}((P_V P^N \Sigma_\varepsilon)^2)$.
 
 **Remark 4.11 (Berry–Esseen rate to normality).**
 By the Berry–Esseen theorem with the modern Esseen constant [tyurin2010],
 
 $$
 \sup_{t \in \mathbb{R}} \left|\mathbb{P}\!\left[\tfrac{T_{n} - \mathbb{E}[T_{n}]}{\sqrt{\mathrm{Var}(T_{n})}} \leq t\right] - \Phi(t)\right|
-\leq \frac{0.4748 \cdot \mathbb{E}|X_{1} - \mathbb{E}[X_{1}]|^{3}}{\sqrt{n} \cdot (\mathrm{Var}(X_{1}))^{3/2}}
-= O\!\left(\sqrt{\tfrac{k}{n}}\right).
+\;\leq\;
+\frac{0.4748 \cdot \mathbb{E}|X_{1} - \mathbb{E}[X_{1}]|^{3}}{\sqrt{n} \cdot (\mathrm{Var}(X_{1}))^{3/2}}.
 $$
 
-This gives the explicit rate at which the standardized $T_{n}$ is approximately standard normal, supporting Wald-type confidence intervals when $n \gg k$.
+For a chi-squared random variable $Z \sim \chi^2_k$ scaled by $\sigma^2$, the third central moment is $8 k \sigma^6$ and the variance is $2 k \sigma^4$, so the Lyapunov ratio is $8k\sigma^6 / (2k\sigma^4)^{3/2} = 8k / (2\sqrt 2 \cdot k^{3/2} \sigma^0) = \tfrac{2\sqrt{2}}{\sqrt{k}}$. Substituting:
+
+$$
+\sup_{t} |\cdots| \;\leq\; \frac{0.4748 \cdot 2\sqrt{2}}{\sqrt{n k}} \;=\; O\!\left(\tfrac{1}{\sqrt{n k}}\right).
+$$
+
+The rate *improves* with $k$ rather than degrading: a high-dimensional residual gives a sharper Gaussian approximation, not a coarser one (the chi-squared distribution is closer to Gaussian when $k$ is large, by CLT applied internally to $\chi^2_k = \sum_i Z_i^2$). For fixed $k$, the rate is the classical $O(n^{-1/2})$. An earlier draft incorrectly stated $O(\sqrt{k/n})$, which inverted the scaling.
 
 ---
 
@@ -487,8 +559,20 @@ $$
 
 ### 5.2 Theorem 2 (proposed): power and minimax optimality
 
-**Theorem 5.2 (Proposed: localization power and minimax lower bound).**
-Suppose Assumptions GM, BD, REG hold with isotropic Gaussian noise. Suppose $\xi(a, b) \in V$ almost surely (so $\mu_{\xi} \in V$ and $\Sigma_{\xi}$ has support in $V$), where $V$ is a fixed $r$-dimensional subspace satisfying $V \subseteq \bigcap_{p \in M} N_{p} M$ (the common normal bundle, the intersection of normal spaces over the data support of $M$). We propose:
+**Theorem 5.2 (Proposed: localization power; lower bound conjectural).**
+Suppose Assumptions GM, BD, REG hold with isotropic Gaussian noise. Suppose $\xi(a, b) \in V$ almost surely (so $\mu_{\xi} \in V$ and $\Sigma_{\xi}$ has support in $V$), where $V$ is a fixed $r$-dimensional subspace, and *one of the following holds*:
+
+- **(L) Linear-span case.** $M = M_S$ is the linear (helix) span of Definition 2.3 (after centering). Then $N_p M = M_S^\perp$ is constant over $p \in M$, the common normal subspace assumption $V \subseteq \bigcap_p N_p M = M_S^\perp$ is automatic, and the theorem holds as stated below.
+
+- **(C) Curve case with bounded normal-frame drift.** $M = M_C$ is the helix curve and $V \subseteq N_{p_0} M$ for a fixed reference base point $p_0$, with the *normal-frame drift constant*
+$$
+\eta := \sup_{p \in M\,:\,\Pi_M^{-1}(p) \cap \mathrm{supp}(h_w) \neq \emptyset} \bigl\|P_V (P^N_p - P^N_{p_0}) P_V\bigr\|_{\mathrm{op}}
+$$
+satisfying $\eta \leq \eta_0$ for a small constant $\eta_0$. Then the conclusions below hold with an additional additive error $O(\eta_0 D_{\max}^2)$ in $\mathbb{E}[T_n^V]$ and an additional $O(\eta_0 r \sigma^2)$ in the variance.
+
+The strict assumption $V \subseteq \bigcap_p N_p M$ used in earlier drafts holds in case (L) trivially, and in case (C) only with $\eta = 0$ — which fails for a curved 1D manifold whose normal space rotates along the curve. Case (C) replaces it by an explicit, empirically verifiable drift bound.
+
+We propose:
 
 (a) **Achievability (upper bound).** For the test that rejects $H_{0}$ when $T_{n}^{V} > c_{\alpha}$ with $c_{\alpha}$ calibrated to level $\alpha$, the test should achieve power at least $1 - \beta$ provided
 
@@ -498,13 +582,21 @@ $$
 
 where $\Delta := \|\mu_{\xi}\|_{2}$ and $C_{1}$ is an absolute constant.
 
-(b) **Lower bound (minimax).** Let $\mathcal{P}_{\Delta}$ denote the class of distributions in Assumption GM with $\|\mu_{\xi}\|_{2} \geq \Delta$ and $\xi \in V$. Any test $\psi$ with size at most $\alpha$ that achieves uniform power $\inf_{P \in \mathcal{P}_{\Delta}} \mathbb{P}_{P}[\psi = 1] \geq 1 - \beta$ requires
+(b) **Two-point Le Cam lower bound (proven).** Let $\mathcal{P}_{\Delta}$ denote the class of distributions in Assumption GM with $\|\mu_{\xi}\|_{2} \geq \Delta$ and $\xi \in V$. Any test $\psi$ with size at most $\alpha$ that achieves uniform power $\inf_{P \in \mathcal{P}_{\Delta}} \mathbb{P}_{P}[\psi = 1] \geq 1 - \beta$ requires
 
 $$
-n \;\geq\; C_{2} \cdot \frac{r \sigma^{4}}{\Delta^{4}} \cdot \log\!\bigl(\tfrac{1}{\beta(1 - \alpha)}\bigr), \tag{5.2}
+n \;\geq\; C_{2}^{\mathrm{LC}} \cdot \frac{\sigma^{2}}{\Delta^{2}} \cdot \log\!\bigl(\tfrac{1}{\beta(1 - \alpha)}\bigr), \tag{5.2a}
 $$
 
-for an absolute constant $C_{2}$. Hence $T_{n}^{V}$ is minimax-optimal in $r, \sigma^{2}, \Delta^{2}$ up to absolute constants.
+for an absolute constant $C_{2}^{\mathrm{LC}}$. The proof is a direct two-point Le Cam reduction (Lemmas 5.5–5.6 below). This rate matches the upper bound in $\sigma^{2}/\Delta^{2}$ but does *not* match the upper bound in $r$ or in the exponent of $\Delta$.
+
+(b') **Conjectured matching minimax rate.** We conjecture, and do not prove in this document, that the rate (5.1) is minimax-optimal:
+
+$$
+n \;\geq\; C_{2} \cdot \frac{r \sigma^{4}}{\Delta^{4}} \cdot \log\!\bigl(\tfrac{1}{\beta(1 - \alpha)}\bigr). \tag{5.2b}
+$$
+
+The rate (5.2b) is the standard minimax separation rate for testing $\mathcal{N}(0, \sigma^2 I_r)$ against $\bigcup_{\|\mu\|=\Delta} \mathcal{N}(\mu, \sigma^2 I_r)$, established by Ingster [ingster1993, ingster2003] for the Gaussian sequence model and refined non-asymptotically by Baraud [baraud2002] and Collier–Comminges–Tsybakov [collier2017]. The argument in those works combines Le Cam with a chi-squared mixture over a packing of $\mathbb{S}^{r-1}(\Delta)$, not the simple Fano-over-orthogonal-directions argument we sketched in earlier drafts (which gives $r \sigma^{2}/\Delta^{2} \log r$, not the desired $r \sigma^{4}/\Delta^{4}$). Translating those results to our setting requires checking that the wrong-population conditional distribution under GM matches the Gaussian sequence model after the projection of Lemma 5.3, which we believe is straightforward but have not verified. We treat (5.2b) as a target for follow-up work.
 
 (c) **Exact null distribution.** Under $H_{0}$ with isotropic Gaussian noise and oracle $M$, $T_{n}^{V}$ is distributed exactly as a difference of two scaled chi-squared random variables; $\bar{Y}_{w} = \frac{1}{n_w}\sum_j \|P_V r(h_w^{(j)})\|^2 \sim \frac{\sigma^2}{n_w}\chi^2_{n_w r}$ and similarly for $\bar{Y}_c$, with $T_n^V = \bar{Y}_w - \bar{Y}_c$. The asymptotic Wald form is
 
@@ -524,20 +616,33 @@ Under the hypotheses of Theorem 5.2,
 
 $$
 \begin{aligned}
-P_V r(h_{c}) &= P_V \varepsilon_{c} + O_{\mathbb{P}}(\sigma^{2} \kappa_{\max}), \\
-P_V r(h_{w}) &= \xi + P_V \varepsilon_{w} + O_{\mathbb{P}}(\sigma^{2} \kappa_{\max}).
+P_V r(h_{c}) &= P_V \varepsilon_{c} + e_c, \\
+P_V r(h_{w}) &= \xi + P_V \varepsilon_{w} + e_w,
 \end{aligned}
 $$
 
-*Proof outline.* By Corollary 4.4, $r(h_{c}) = P^N \varepsilon_{c} + O_{\mathbb{P}}(\sigma^{2} \kappa_{\max})$. Apply $P_V$:
+with remainder bounds:
+
+- *Linear-span case (L):* $\|e_c\|, \|e_w\| = O_{\mathbb{P}}(\sigma^{2} \kappa_{\max})$ from the linearization remainder of Lemma 4.3 only (κ_max = 0 for a linear M, so the remainder vanishes exactly).
+- *Curve case (C):* $\|e_c\|, \|e_w\| = O_{\mathbb{P}}(\sigma^{2} \kappa_{\max}) + O_{\mathbb{P}}(\eta_0 \cdot (\sigma + \|\xi\|))$ where the second term is the normal-frame drift error.
+
+*Proof outline.* By Corollary 4.4, $r(h_{c}) = P^N_{p} \varepsilon_{c} + R_2$ where $\|R_2\| \leq \tfrac{1}{2}\kappa_{\max} \|P^N \varepsilon_c\|^2$. Apply $P_V$:
 
 $$
-P_V r(h_{c}) = P_V P^N \varepsilon_{c} + O_{\mathbb{P}}(\sigma^{2} \kappa_{\max}).
+P_V r(h_{c}) = P_V P^N_{p} \varepsilon_{c} + P_V R_2.
 $$
 
-Since $V \subseteq N_{p} M$ for every $p \in M$ (the common-normal-bundle hypothesis), $P_V$ acts as the identity on the normal space intersected with $V$, so $P_V P^N_{p} = P_V$ for every $p$ in the data support. Hence $P_V r(h_{c}) = P_V \varepsilon_{c}$ to leading order.
+In case (L), $P^N_p = I - U_S U_S^\top$ is constant in $p$ and $V \subseteq M_S^\perp$, so $P_V P^N_p = P_V$ exactly and the only error is the linearization remainder $\|P_V R_2\| \leq \tfrac{1}{2}\kappa_{\max} \|P^N \varepsilon\|^2$, which is $O_\mathbb{P}(\sigma^2 \kappa_{\max})$ in expectation; for a linear span $\kappa_{\max} = 0$ and this vanishes.
 
-For $r(h_{w}) = \xi + P^N \varepsilon_{w} + O_{\mathbb{P}}(\sigma^{2} \kappa_{\max})$: $P_V \xi = \xi$ (since $\xi \in V$), and $P_V P^N \varepsilon_{w} = P_V \varepsilon_{w}$ as above. Combining gives the claim. ∎
+In case (C), $V \subseteq N_{p_0} M$ at the reference point but $V \not\subseteq N_p M$ at general $p \in M$. Decompose $P_V P^N_p = P_V P^N_{p_0} + P_V (P^N_p - P^N_{p_0}) = P_V + P_V (P^N_p - P^N_{p_0})$, the second term having operator norm at most $\eta$ on $V$ by the drift definition. Hence
+
+$$
+\|P_V P^N_p \varepsilon - P_V \varepsilon\|_{2} \leq \eta \|\varepsilon\|_2,
+$$
+
+contributing an $O_\mathbb{P}(\eta_0 \sigma)$ term. For $r(h_{w}) = \xi + P^N \varepsilon_{w} + R_2$: $P_V \xi = \xi$ since $\xi \in V$, and the same drift analysis gives an additional $O_\mathbb{P}(\eta_0 \|\xi\|)$ term from $P_V P^N_p \varepsilon_w$. Combining gives the claim. ∎
+
+The drift error $\eta_0$ is the *replacement* for the strict $V \subseteq \bigcap_p N_p M$ condition. It is empirically verifiable: estimate $P^N_p$ at a finite sample of base points along the curve and compute the maximum operator-norm drift restricted to $V$. In the helix-curve case, the tangent direction rotates at a rate set by $\|u_{\mathrm{lin}}\|$ relative to the cosine/sine amplitudes; we expect $\eta_0$ to be small after centering and after restricting $V$ to the high-frequency $T \in \{2,5\}$ components, and we plan to report $\widehat{\eta}_0$ alongside the test statistic.
 
 ### 5.4 Step 2: variance in projected space
 
@@ -595,9 +700,9 @@ $$
 
 for an explicit constant $C_{1}$ depending on $\alpha, \beta$. ∎
 
-### 5.6 Step 4: minimax lower bound via Le Cam
+### 5.6 Step 4: lower bound via two-point Le Cam, and the conjectural matching rate
 
-We now prove the matching lower bound, which is one of the key upgrades over the previous draft.
+We prove the two-point Le Cam lower bound (5.2a), which gives the $\sigma^2/\Delta^2$ rate but not the matching $r$-dependence. We then state the conjectural full minimax rate (5.2b) with a detailed pointer to the Ingster-style argument that would establish it. Earlier drafts of this section sketched a "Fano chaining" argument that would give the $\Delta^4$ rate; on closer reading the sketch is incoherent (it derives three different rates in three paragraphs), so we have removed it and replaced it with an honest separation between what we prove and what we conjecture.
 
 **Lemma 5.5 (Le Cam two-point lemma).**
 Let $\mathcal{P}_{0}, \mathcal{P}_{1}$ be two distributions on a sample space, and let $\psi$ be any test rejecting $\mathcal{P}_{0}$ with size $\alpha$ and power $1 - \beta$ on $\mathcal{P}_{1}$. Then the total variation distance $\mathrm{TV}(\mathcal{P}_{0}, \mathcal{P}_{1}) \geq 1 - \alpha - \beta$, equivalently the chi-squared divergence $\chi^{2}(\mathcal{P}_{1} \| \mathcal{P}_{0}) \geq (1 - \alpha - \beta)^{2}$ when the latter is small.
@@ -619,23 +724,17 @@ $$
 = \exp\!\bigl(\tfrac{\Delta^{2}}{\sigma^{2}}\bigr) - 1.
 $$
 
-Tensorizing across $n$ i.i.d. wrong samples gives the stated bound: $\chi^{2}$ is sub-additive under products and the result is a product of $n$ identical Gaussians, giving the exponential $n \Delta^{2}/\sigma^{2}$. The correct samples contribute zero to the divergence since their distribution is unchanged. ∎
+Tensorizing across $n$ i.i.d. wrong samples uses the fact that $1 + \chi^2$ is multiplicative under products of independent measures: $(1 + \chi^2(\mathcal{P}_1^{\otimes n} \| \mathcal{P}_0^{\otimes n})) = (1 + \chi^2(\mathcal{P}_1 \| \mathcal{P}_0))^n$. The correct samples contribute a factor of $1$ to this product since their distribution is unchanged across $\mathcal{P}_0$ and $\mathcal{P}_1$. ∎
 
-*Proposed proof of Theorem 5.2(b), the lower bound.* By Lemma 5.5, any test with size $\alpha$ and uniform power $1 - \beta$ over $\mathcal{P}_{\Delta}$ requires $\chi^{2}(\mathcal{P}_{1}^{\otimes n} \| \mathcal{P}_{0}^{\otimes n}) \geq (1 - \alpha - \beta)^{2}$. Combine with (5.3):
+*Proposed proof of Theorem 5.2(b), part (5.2a).* By Lemma 5.5, any test with size $\alpha$ and uniform power $1 - \beta$ over $\mathcal{P}_{\Delta}$ requires $\chi^{2}(\mathcal{P}_{1}^{\otimes n} \| \mathcal{P}_{0}^{\otimes n}) \geq (1 - \alpha - \beta)^{2}$. Combine with (5.3):
 
 $$
 \exp(n \Delta^{2} / \sigma^{2}) - 1 \geq (1 - \alpha - \beta)^{2},
 $$
 
-so $n \Delta^{2} / \sigma^{2} \geq \log\bigl(1 + (1 - \alpha - \beta)^{2}\bigr)$. This gives $n \geq C \sigma^{2} / \Delta^{2} \cdot \log(\cdots)$ for a suitable constant.
+so $n \Delta^{2} / \sigma^{2} \geq \log\bigl(1 + (1 - \alpha - \beta)^{2}\bigr)$. This gives $n \geq C_2^{\mathrm{LC}} \sigma^{2} / \Delta^{2} \cdot \log\!\bigl(\tfrac{1}{\beta(1-\alpha)}\bigr)$ after rearrangement. ∎
 
-To get the $\Delta^{4}$ rate (which matches the upper bound), apply Le Cam to the harder problem of distinguishing $\mathcal{P}_{0}$ from a *mixture* of $r$ point alternatives $\{v_{1}, \dots, v_{r}\}$ each of norm $\Delta/\sqrt{2}$ in mutually orthogonal directions in $V$. This is the standard Fano-style approach (Wainwright [wainwright2019] Chapter 15): the chi-squared between the mixture and $\mathcal{P}_{0}$ is $\frac{1}{r}(\exp(n \Delta^{2} / (2 r \sigma^{2})) - 1)$, and the Fano lower bound becomes $n \Delta^{2} / (2 r \sigma^{2}) \geq \log(r / e)$, yielding
-
-$$
-n \geq C_{2} \cdot \frac{r \sigma^{2}}{\Delta^{2}} \cdot \log r.
-$$
-
-The full $\Delta^{4}$ rate is obtained by chaining the standard optimization argument over the alternative class; the explicit constant comes from Tsybakov [tsybakov2009] Theorem 2.7. The matching $r \sigma^{4} / \Delta^{4}$ rate follows. ∎
+**Toward the conjectural matching rate (5.2b).** The two-point Le Cam bound (5.2a) does not depend on the dimension $r$ of $V$, because it considers a *single* alternative direction. The achievable upper bound (5.1), $n \geq C_1 r \sigma^4 / \Delta^4$, is harder than (5.2a) by a factor of $r \sigma^2 / \Delta^2$. Closing this gap is the content of the chi-squared mixture argument of Ingster [ingster1993, ingster2003]: one constructs a uniform mixture over an approximately-$\Delta$-norm packing of $\mathbb{S}^{r-1}$ inside $V$ and bounds the chi-squared between the mixture and $\mathcal{P}_0$ by a quadratic form. Baraud [baraud2002] and Collier–Comminges–Tsybakov [collier2017] give finite-sample versions with explicit constants. The standard outcome is that for the Gaussian sequence model, the minimax separation rate is $\Delta^2 \asymp \sigma^2 \sqrt{r/n}$, i.e. $n \asymp r \sigma^4 / \Delta^4$. We expect the same rate to apply here after Lemma 5.3 reduces our problem to that model on the projected residuals, but we have not pushed the argument through. *We do not claim (5.2b) as proven; we record it as a target.*
 
 ### 5.7 Step 5: exact null distribution
 
@@ -677,17 +776,23 @@ The estimator $\widehat{M}_{\mathrm{param}}$ is the column space of the $d \time
 ### 6.2 Theorem 3 (proposed): finite-sample concentration
 
 **Theorem 6.2 (Proposed: manifold recovery).**
-Let Assumption GM hold with sub-Gaussian noise $\|\varepsilon\|_{\psi_{2}} \leq \sigma$. Let $\lambda_{\min}^{B} := \lambda_{\min}(\mathbb{E}[b b^{\top}])$ where $b = (b_{1}(a), \dots, b_{K}(a))^{\top}$ and the expectation is over the empirical distribution of integer labels in the data. Let $\sigma_{K}(C^*)$ denote the smallest singular value of the population coefficient matrix $C^* \in \mathbb{R}^{K \times d}$. Suppose the parametric class is well-specified, i.e. $\mathbb{E}[H_c \mid B] = B (C^*)^{\top}$ exactly. We propose to prove that with probability at least $1 - \delta$,
+Let Assumption GM hold with sub-Gaussian noise $\|\varepsilon\|_{\psi_{2}} \leq \sigma$. Let $\lambda_{\min}^{B} := \lambda_{\min}(\mathbb{E}[b b^{\top}])$ and $\lambda_{\max}^{B} := \lambda_{\max}(\mathbb{E}[b b^{\top}])$ where $b = (b_{1}(a), \dots, b_{K}(a))^{\top}$ and the expectation is over the empirical distribution of integer labels in the data. Let $\kappa^B := \lambda_{\max}^B / \lambda_{\min}^B$ denote the design condition number. Let $\sigma_{K}(C^*)$ denote the smallest singular value of the population coefficient matrix $C^* \in \mathbb{R}^{K \times d}$. Suppose the parametric class is well-specified, i.e. $\mathbb{E}[H_c \mid B] = B (C^*)^{\top}$ exactly. We propose to prove that with probability at least $1 - \delta$,
 
 $$
 \sin \theta_{\max}\bigl(\widehat{M}_{\mathrm{param}}, M\bigr)
 \;\leq\;
-C_{3} \cdot \frac{\sigma}{\lambda_{\min}^{B} \cdot \sigma_{K}(C^*)} \cdot \sqrt{\frac{d \log(d / \delta)}{n_c}}, \tag{6.1}
+C_{3} \cdot \frac{\sigma\, \sqrt{\kappa^B}}{\sqrt{\lambda_{\min}^{B}} \cdot \sigma_{K}(C^*)} \cdot \sqrt{\frac{d \log(d / \delta)}{n_c}}, \tag{6.1}
 $$
 
-for an absolute constant $C_{3}$.
+for an absolute constant $C_{3}$. When the helix design is well-conditioned ($\kappa^B = O(1)$, which holds for the orthonormalized helix basis after centering), this simplifies to
 
-Our proposed proof has two steps: (1) Frobenius bound on $\widehat{C}$ via matrix concentration, (2) Davis–Kahan / Wedin to convert Frobenius to sin-theta. The second step uses the operator-norm form of Wedin (rather than the Frobenius Davis–Kahan), which we believe gives a sharper constant by factor $\sqrt{K}$.
+$$
+\sin \theta_{\max} \;\leq\; C_3' \cdot \frac{\sigma}{\sqrt{\lambda_{\min}^B} \cdot \sigma_K(C^*)} \cdot \sqrt{\tfrac{d \log(d/\delta)}{n_c}}.
+$$
+
+The denominator carries $\sqrt{\lambda_{\min}^B}$ rather than $\lambda_{\min}^B$: in the OLS Frobenius bound below, $(B^\top B/n_c)^{-1}$ contributes $1/\lambda_{\min}^B$, but $\|B^\top E\|_{\mathrm{op}} \lesssim \sigma \sqrt{n_c \lambda_{\max}^B (d+K)}$ contributes a $\sqrt{\lambda_{\max}^B}$, and the two combine to $\sqrt{\lambda_{\max}^B}/\lambda_{\min}^B = \sqrt{\kappa^B}/\sqrt{\lambda_{\min}^B}$.
+
+Our proposed proof has two steps: (1) operator-norm bound on $\widehat{C}$ via sub-Gaussian matrix concentration, (2) Wedin's perturbation theorem to convert operator-norm to sin-theta. The second step uses the operator-norm form of Wedin rather than the Frobenius Davis–Kahan: we believe this avoids an extra $\sqrt{K}$ factor.
 
 ### 6.3 Step 1: Frobenius bound on $\widehat{C}$
 
@@ -697,7 +802,9 @@ Under the hypotheses of Theorem 6.2, with probability at least $1 - \delta$,
 $$
 \|\widehat{C} - C^*\|_{\mathrm{op}}
 \;\leq\;
-C \cdot \sigma \cdot \sqrt{\frac{d + K \log(d / \delta)}{n_c \cdot \lambda_{\min}^{B}}}. \tag{6.2}
+C \cdot \sigma \cdot \frac{\sqrt{\lambda_{\max}^B}}{\lambda_{\min}^B} \cdot \sqrt{\frac{d + K \log(d / \delta)}{n_c}}
+\;=\;
+C \cdot \sigma \cdot \frac{\sqrt{\kappa^B}}{\sqrt{\lambda_{\min}^B}} \cdot \sqrt{\frac{d + K \log(d / \delta)}{n_c}}. \tag{6.2}
 $$
 
 Converting to Frobenius via $\|\cdot\|_{F} \leq \sqrt{K} \|\cdot\|_{\mathrm{op}}$:
@@ -705,16 +812,16 @@ Converting to Frobenius via $\|\cdot\|_{F} \leq \sqrt{K} \|\cdot\|_{\mathrm{op}}
 $$
 \|\widehat{C} - C^*\|_{F}
 \;\leq\;
-C \cdot \sigma \cdot \sqrt{\frac{K(d + K \log(d / \delta))}{n_c \cdot \lambda_{\min}^{B}}}. \tag{6.3}
+C \cdot \sigma \cdot \frac{\sqrt{\kappa^B}}{\sqrt{\lambda_{\min}^B}} \cdot \sqrt{\frac{K(d + K \log(d / \delta))}{n_c}}. \tag{6.3}
 $$
 
 *Proof outline.* Write $H_c = B (C^*)^{\top} + E$ with $E \in \mathbb{R}^{n_c \times d}$ a noise matrix with i.i.d. sub-Gaussian rows of parameter $\sigma$. The OLS residual is
 
 $$
-\widehat{C} - C^* = (B^{\top} B)^{-1} B^{\top} E,
+\widehat{C} - C^* = (B^{\top} B)^{-1} B^{\top} E.
 $$
 
-a transpose convention. Apply the matrix concentration bound for sub-Gaussian matrices (Vershynin [vershynin2018] Section 4.7): $\|B^{\top} E / n_c\|_{\mathrm{op}} \leq C \sigma \sqrt{(d + K)/n_c} \cdot \sqrt{\|B^{\top} B / n_c\|_{\mathrm{op}}}$ with the stated probability. Invert $(B^{\top} B / n_c)$ which has minimum eigenvalue $\lambda_{\min}^{B} (1 - O(\sqrt{K \log K / n_c}))$ by matrix Bernstein (Tropp [tropp2015]); the leading term is $\lambda_{\min}^{B}$ for $n_c \gg K \log K$. Combine. ∎
+Apply the matrix concentration bound for sub-Gaussian matrices (Vershynin [vershynin2018] Section 4.7): $\|B^{\top} E\|_{\mathrm{op}} \leq C \sigma \sqrt{n_c \lambda_{\max}^B (d + K \log(d/\delta))}$ with the stated probability. The inverse satisfies $\|(B^{\top} B)^{-1}\|_{\mathrm{op}} \leq 1/(n_c \lambda_{\min}^B (1 - o(1)))$ by matrix Bernstein (Tropp [tropp2015]), valid for $n_c \gg K \log K$. Combining: $\|\widehat C - C^*\|_{\mathrm{op}} \leq \sigma \sqrt{\lambda_{\max}^B (d + K\log(d/\delta))/n_c} / \lambda_{\min}^B = \sigma \sqrt{\kappa^B (d + K\log(d/\delta))/n_c} / \sqrt{\lambda_{\min}^B}$. ∎
 
 ### 6.4 Step 2: from Frobenius to sin-theta
 
@@ -755,7 +862,7 @@ $$
 \;\leq\;
 \underbrace{\frac{b(M)}{\sigma_{K}(C^*)}}_{\text{bias}}
 \;+\;
-\underbrace{C_{3} \cdot \frac{\sigma}{\lambda_{\min}^{B} \sigma_{K}(C^*)} \sqrt{\frac{d \log(d / \delta)}{n_c}}}_{\text{variance}}. \tag{6.5}
+\underbrace{C_{3} \cdot \frac{\sigma \sqrt{\kappa^B}}{\sqrt{\lambda_{\min}^{B}}\, \sigma_{K}(C^*)} \sqrt{\frac{d \log(d / \delta)}{n_c}}}_{\text{variance}}. \tag{6.5}
 $$
 
 *Proof outline.* Define $C^*$ as the population OLS minimizer rather than the true generative parameter. Then $\mathbb{E}[H_c] = B (C^*)^{\top} + R$ where $\|R\|_{F} \leq b(M) \sqrt{n_c}$ is the misspecification residual. The Frobenius bound (6.3) now picks up an additional $b(M) \sqrt{n_c} / n_c = b(M) / \sqrt{n_c}$ term, but this is dominated by the deterministic bias $b(M)$ in the operator-norm bound. Apply Wedin as before; the bias and variance terms combine additively. ∎
@@ -788,6 +895,11 @@ $$
 Averaging across populations and combining with Theorem 4.2's noise concentration via union bound at $\delta/2$ each gives the stated result. ∎
 
 The composed bound vanishes at rate $1/\sqrt{n}$ in dominant terms; the manifold-error term is the bottleneck when $\sigma \sqrt{d \log d}/\sqrt{n_c} > \sigma^{2} \sqrt{k}/\sqrt{n}$, which holds typically.
+
+**Remark 6.7 (Tightening $D_{\max}^2$ via centering).**
+The $D_{\max}^2$ factor in (6.6) is potentially loose: it bounds the squared norm of the activation, including the center-of-mass component which is annihilated by the projection difference $\Pi_M - \Pi_{\widehat M}$ when both pass through the same affine offset. After mean-centering activations (Remark 2.4), the relevant quantity is the *centered* width $D_{\max}^{\mathrm{ctr}} := \max_i \|h_c^{(i)} - \bar h_c\|$, which is typically much smaller than the uncentered $\|h_c^{(i)}\|$ at deeper layers (where activations have large mean component due to the residual stream's accumulation). Empirically we expect $D_{\max}^{\mathrm{ctr}} / D_{\max}$ in the range $0.1$–$0.3$. We will report both the uncentered Theorem 6.6 bound and the centered version with $D_{\max}^{\mathrm{ctr}}$ replacing $D_{\max}$.
+
+A second sharpening: when $\widehat M, M$ share their first $m_0$ basis directions (typical for the helix span where the linear and large-period $T \in \{50, 100\}$ components are recovered with high accuracy and the bulk of the error is in high-frequency $T \in \{2, 5\}$ components), the relevant operator-norm difference is $\|\Pi_M - \Pi_{\widehat M}\|_{\mathrm{op}}$ restricted to the unstable subspace, often substantially smaller than the global $\sin\theta_{\max}$.
 
 ---
 
@@ -842,7 +954,29 @@ $$
 \end{aligned}
 $$
 
-(The orthogonality of the influence function to manifold-estimation errors at first order is what makes cross-fitting bias-free; this is the Neyman-orthogonality property of Chernozhukov 2018.) Hence
+**Neyman-orthogonality verification.** Following Chernozhukov et al. [chernozhukov2018] §1, our parameter of interest is $\theta_0 := \mathbb{E}[T_n] = \mathbb{E}[\|r_M(h_w)\|^2] - \mathbb{E}[\|r_M(h_c)\|^2]$, with nuisance parameter $\Pi_M$ (or, parameterizing in the linear-span case, $U_S$ — the orthonormal basis of $S$). Define the moment function
+
+$$
+\psi(h_c, h_w; \theta, \Pi) := (\|h_w - \Pi h_w\|^2 - \|h_c - \Pi h_c\|^2) - \theta.
+$$
+
+Neyman-orthogonality requires the Gateaux derivative of $\mathbb{E}[\psi]$ with respect to $\Pi$ at the truth to vanish:
+
+$$
+\partial_t \, \mathbb{E}[\psi(h_c, h_w; \theta_0, \Pi_M + t \Delta_\Pi)]\big|_{t=0} = 0
+\quad \text{for all admissible } \Delta_\Pi.
+$$
+
+For the linear-span parameterization, write $\Pi = U U^\top$ with $U \in \mathbb{R}^{d \times m}$ orthonormal, and let $\Delta_U$ be a tangent direction satisfying $U^\top \Delta_U + \Delta_U^\top U = 0$ (the Stiefel-manifold tangent condition). Then $\partial_t (U + t\Delta_U)(U + t\Delta_U)^\top|_{t=0} = U \Delta_U^\top + \Delta_U U^\top$, and
+
+$$
+\partial_t \mathbb{E}[\|h - (U + t\Delta_U)(U+t\Delta_U)^\top h\|^2]\big|_{t=0}
+= -2 \mathbb{E}[h^\top (U \Delta_U^\top + \Delta_U U^\top)(I - UU^\top) h].
+$$
+
+Under Assumption GM, $\mathbb{E}[h_p] \in M_S = \mathrm{col}(U)$ for both $p \in \{c, w\}$ in the *centered* model where $\mathbb{E}[\xi] = 0$ (the $\mu_\xi \neq 0$ case is the alternative we are testing for, not a nuisance). Hence $(I - UU^\top)\mathbb{E}[h_p] = 0$ to leading order under both populations, and the cross-term vanishes from population means. The remaining variance contribution is the same across populations under GM(iii) and cancels in the difference $\mathbb{E}[\psi]$. Therefore the Gateaux derivative vanishes, establishing Neyman-orthogonality. In the alternative $\mu_\xi \neq 0$ case the orthogonality holds at first order in the manifold-estimation error $\|\widehat{U} - U\|_{\mathrm{op}}$, with a residual bias of order $\|\widehat{U} - U\|_{\mathrm{op}} \cdot \|\mu_\xi\| = o_\mathbb{P}(\|\mu_\xi\|^2)$ when $\|\widehat{U} - U\|_{\mathrm{op}} = o_\mathbb{P}(\|\mu_\xi\|)$ — which holds whenever Theorem 6.2 gives $\sin\theta_{\max} = o_\mathbb{P}(\Delta)$.
+
+This Neyman-orthogonality is what makes the cross-fitted estimator $\sqrt{n}$-consistent without requiring $\sqrt{n}$-consistency of the manifold estimator: the leading bias term cancels at first order. The variance is
 
 $$
 V_{\infty} = \frac{\mathrm{Var}(\phi_{w}(h_{w}))}{n_{w}/n} + \frac{\mathrm{Var}(\phi_{c}(h_{c}))}{n_{c}/n}.
@@ -865,9 +999,11 @@ gives a valid $(1 - \alpha)$-asymptotic confidence interval. We estimate $V_{\in
 
 ## 8. Proposed: matched permutation with exact conditional validity
 
-Wrong samples are systematically harder than correct samples (more carries, larger sums). A naive permutation null would reject for *any* between-population difference, including pure input-difficulty differences that have nothing to do with manifold geometry. We propose stratified within-bin permutation as a fix, and we believe this can be shown to give exact conditional Type I control via the Lehmann–Romano permutation-group argument.
+Wrong samples are systematically harder than correct samples (more carries, larger sums). A naive permutation null would reject for *any* between-population difference, including pure input-difficulty differences that have nothing to do with manifold geometry. We propose stratified within-bin permutation as a fix, building on the established literature on stratified and regression-adjusted permutation tests (Lehmann–Romano [lehmann2005] §15, Freedman–Lane [freedmanlane1983], Anderson–Robinson [andersonrobinson2001], Hemerik–Goeman [hemerik2018]). The construction below gives exact conditional Type I control via the Lehmann–Romano permutation-group argument.
 
 ### 8.1 The bin partition and exchangeability
+
+**Data convention for §8.** The matched permutation test runs on the *pooled* data $\mathcal{D}_n = \{(a_i, b_i, h_i, y_i)\}_{i=1}^n$ where $i$ indexes the union of the correct and wrong populations and $y_i \in \{0, 1\}$ is the correctness label. We do *not* permute within $H_c$ alone (which would give single-label bins where permutation is meaningless); we permute the *labels* $y_i$ within bins of pooled $(h_i, y_i)$ pairs. This applies throughout §8 unless otherwise stated.
 
 **Definition 8.1 (Coarse bin function).**
 Define $\phi: \{0, \dots, 99\}^{2} \to \mathcal{B}$, where $\mathcal{B}$ is a finite set of bins, by
@@ -880,27 +1016,37 @@ Each component takes finitely many values; in our pre-registration the total num
 
 ### 8.2 Conditional null and exchangeability
 
-**Definition 8.2 (Conditional null).**
-The conditional null hypothesis is
+**Definition 8.2 (Conditional null — explicit exchangeability conditions).**
+Let $\mathcal{D}_n = \{(a_i, b_i, h_i, y_i)\}_{i=1}^n$ denote the data, where $y_i = y(a_i, b_i)$ is the correctness label and $h_i = h(a_i, b_i)$ is the residual-stream activation. The conditional null hypothesis is
 
 $$
-H_{0}^{\mathrm{cond}}: \quad
-\bigl\{(H_c^{(i)}, y_{i})\bigr\}_{i \in \phi^{-1}(B)}
+H_{0}^{\mathrm{cond}}: \quad \text{for every bin } B \in \mathcal{B} \text{ and every permutation } \pi \in \mathfrak{S}(\phi^{-1}(B)),
+$$
+
+$$
+\bigl\{(h_{i}, y_{i})\bigr\}_{i \in \phi^{-1}(B)}
 \overset{d}{=}
-\bigl\{(H_c^{(\pi(i))}, y_{\pi(i)})\bigr\}_{i \in \phi^{-1}(B)}
-\quad \forall B \in \mathcal{B}, \forall \pi \in \mathfrak{S}(\phi^{-1}(B)).
+\bigl\{(h_{\pi(i)}, y_{\pi(i)})\bigr\}_{i \in \phi^{-1}(B)},
 $$
 
-That is, within each bin, the joint distribution of $(h, y)$ is invariant under permutation of indices.
+where $\overset{d}{=}$ denotes equality in joint distribution conditional on the bin assignments $\{\phi(a_i, b_i)\}_{i=1}^n$. Concretely, $H_0^{\mathrm{cond}}$ says: *within each bin, knowing the correctness label tells you nothing additional about the activation* — equivalently, $h \perp y \mid \phi(a, b)$.
+
+This is the appropriate null for our science question: we want to detect activation-level differences between correct and wrong populations *that are not explained by input difficulty* (sum size, carries, operand magnitude, tokenization). A naive between-population test rejects $h \perp y$ marginally, conflating input-difficulty differences with representational differences. The within-bin null $h \perp y \mid \phi$ controls for these by stratification.
+
+**Connection to Freedman–Lane / Anderson–Robinson.** Our setup is the "permutation under reduced model" scheme of Freedman–Lane [freedmanlane1983], specialized to the case where the nuisance covariate $\phi$ is discrete and the regression on $\phi$ is the bin-mean. Anderson–Robinson [andersonrobinson2001] Table 1 catalogs the resulting permutation methods; ours is the one labeled "permutation of raw data within strata," which they show preserves exact validity when within-stratum exchangeability holds (their condition R5). Hemerik–Goeman [hemerik2018] §4 give modern conditions for exactness of permutation tests under sub-group invariance, of which ours is a special case.
 
 **Theorem 8.3 (Proposed: exact conditional validity).**
-Let $T_{n}^{\mathrm{matched}}$ be the bin-weighted average statistic defined in the main paper Section 3.3, and let $c_{\alpha}$ be its $(1 - \alpha)$-quantile under the bin-restricted permutation distribution. Then under $H_{0}^{\mathrm{cond}}$,
+Let $T_{n}^{\mathrm{matched}}$ be the bin-weighted average statistic defined in the main paper Section 3.3, and let $c_{\alpha}$ be its $(1 - \alpha)$-quantile under the bin-restricted permutation distribution (the permutations are drawn uniformly from $\prod_{B} \mathfrak{S}(\phi^{-1}(B))$). Then under $H_{0}^{\mathrm{cond}}$,
 
 $$
 \mathbb{P}[T_{n}^{\mathrm{matched}} > c_{\alpha} \mid \{\phi(a_{i}, b_{i})\}_{i}] \leq \alpha.
 $$
 
-*Proof outline.* Conditional on the bin assignments and the within-bin index sets, the joint exchangeability condition of Definition 8.2 implies that the within-bin labels $\{y_{i}\}_{i \in \phi^{-1}(B)}$ are exchangeable for each $B$. Hence any statistic computed as a sum (or weighted sum) of within-bin functions of $(h, y)$ is itself exchangeable under the within-bin permutation group $\prod_{B} \mathfrak{S}(\phi^{-1}(B))$. By Lehmann–Romano [lehmann2005] Theorem 15.2.1 applied to this permutation group, the permutation-distribution quantile $c_{\alpha}$ is exact: $\mathbb{P}[T_{n}^{\mathrm{matched}} > c_{\alpha}] \leq \alpha$ under $H_{0}^{\mathrm{cond}}$. ∎
+*Proof outline.* Conditional on bin assignments, $H_0^{\mathrm{cond}}$ implies that the within-bin labels $\{y_{i}\}_{i \in \phi^{-1}(B)}$ are exchangeable with respect to the activations $\{h_i\}_{i \in \phi^{-1}(B)}$ for each $B$. The product group $G := \prod_{B \in \mathcal{B}} \mathfrak{S}(\phi^{-1}(B))$ acts on the data by permuting indices within each bin. The conditional null is invariant under this action: for any $g \in G$, the joint distribution of the bin-permuted data equals the joint distribution of the original data. Lehmann–Romano [lehmann2005] Theorem 15.2.1 (the randomization hypothesis for general invariance groups) then gives $\mathbb{P}[T_n^{\mathrm{matched}} > c_\alpha] \leq \alpha$. ∎
+
+**Remark 8.4 (Empty / sparse bins).** Bins with $\leq 1$ sample contribute nothing to the permutation distribution (any permutation is trivial). Bins with all-correct or all-wrong labels also contribute trivially. We aggregate over non-trivial bins only when computing $T_n^{\mathrm{matched}}$, weighting each bin by $|\phi^{-1}(B)| \cdot p_B (1 - p_B)$ where $p_B = $ fraction-correct in bin $B$, following Anderson–Robinson's [andersonrobinson2001] efficient-stratified-test construction.
+
+**Remark 8.5 (Diagnosing exchangeability violations).** Exchangeability could fail if (a) the bin function $\phi$ is too coarse and residual difficulty variation remains within bins, or (b) there is autocorrelation across $(a, b)$ pairs from the prompt template. We diagnose (a) by post-hoc regression of $\|r(h)\|^2$ on continuous within-bin difficulty features (digit-product, operand sum modulo small primes); a significant within-bin slope indicates the bin function is too coarse. We diagnose (b) by shuffling the prompt order and checking that the test statistic distribution is unchanged. If diagnostics flag either issue, fall back to the Freedman–Lane regression-adjusted residual permutation: regress $\|r(h)\|^2$ on continuous difficulty features within each bin first, then permute the regression residuals.
 
 ---
 
@@ -922,7 +1068,19 @@ At $\alpha = 1$ and $\delta = 0$, this is $h - P_V h = (I - P_V) h$, the removal
 ### 9.2 The four interventions and their ACEs
 
 **Definition 9.2 (Interventions and average causal effects).**
-Let $\widehat{M} \subset \mathbb{R}^{d}$ denote the estimated manifold, $V \subset \widehat{M}^{\perp}$ the localized failure subspace, $V^{\mathrm{rand}}$ a random subspace of the same dimension as $V$, and $\widehat{\mu}_{\xi}$ the cross-fitted estimate of $\mu_{\xi}$ from wrong-population residuals projected onto $V$. Let $\mathrm{LD}(h)$ denote the logit-difference at the answer position (Wang–Variengien [wang2022]). Then:
+Let $\widehat{M} \subset \mathbb{R}^{d}$ denote the estimated manifold, $V \subset \widehat{M}^{\perp}$ the localized failure subspace, $V^{\mathrm{rand}}$ a random subspace of the same dimension as $V$, and $\widehat{\mu}_{\xi}$ the cross-fitted estimate of $\mu_{\xi}$ from wrong-population residuals projected onto $V$.
+
+**Logit-difference as a downstream forward-pass functional.** For $h \in \mathbb{R}^d$ representing a candidate residual-stream activation at the analysis layer $\ell^*$ on a problem $(a, b)$ with answer token $\tau(s)$, define $\mathrm{forward}_{\ell^* \to L}(h; a, b)$ as the model's downstream forward pass: the function that takes $h$ at layer $\ell^*$ in place of the model's natural activation $h(a, b)$ and propagates through layers $\ell^* + 1, \dots, L$ and the unembedding map, producing logits at the answer position. Then
+
+$$
+\mathrm{LD}(h; a, b)
+\;:=\;
+\mathrm{logit}^{\mathrm{final}}_{\tau(s)}(\mathrm{forward}_{\ell^* \to L}(h; a, b))
+\;-\;
+\max_{t \neq \tau(s)} \mathrm{logit}^{\mathrm{final}}_{t}(\mathrm{forward}_{\ell^* \to L}(h; a, b)).
+$$
+
+This is the *downstream* logit-difference: it is a functional of the residual stream at $\ell^*$ holding the rest of the network fixed, in the sense of activation patching (Wang–Variengien [wang2022]; Conmy et al. [conmy2023]). Critically, $\mathrm{LD}(h; a, b)$ is well-defined for any $h \in \mathbb{R}^d$, not only for the natural activation $h(a, b)$. We write $\mathrm{LD}(h)$ when the dependence on $(a, b)$ is clear from context. Then:
 
 $$
 \begin{aligned}
@@ -936,41 +1094,62 @@ $$
 ### 9.3 Proposition 4 with Hessian remainder
 
 **Proposition 9.3 (Proposed: causal sufficiency, second-order).**
-Assume the model's logit-difference $\mathrm{LD}: \mathbb{R}^{d} \to \mathbb{R}$ is twice continuously differentiable, with operator-norm-bounded Hessian: $\sup_{h \in B(h_{c}, \rho)} \|\nabla^{2} \mathrm{LD}(h)\|_{\mathrm{op}} \leq L$ for $\rho > 2 \|\widehat{\mu}_{\xi}\|$. Then
+Assume the model's logit-difference $\mathrm{LD}: \mathbb{R}^{d} \to \mathbb{R}$ (in the downstream-forward-pass sense of Definition 9.2) is twice continuously differentiable, with operator-norm-bounded Hessian: $\sup_{h \in B(h_{c}, \rho)} \|\nabla^{2} \mathrm{LD}(h)\|_{\mathrm{op}} \leq L$ for $\rho > 2 (\|\widehat{\mu}_{\xi}\| + D_{\max}^{V})$, where $D_{\max}^V := \sup_{i} \|P_V h_c^{(i)}\|$ is the maximum norm of the V-projection of correct activations. The patch operation gives a per-sample displacement
+
+$$
+\Delta h_c \;:=\; \mathrm{Patch}(h_c, V, 1, \widehat{\mu}_\xi) - h_c \;=\; U_V \widehat{\mu}_\xi - P_V h_c.
+$$
+
+Note that $\Delta h_c \neq U_V \widehat\mu_\xi$ in general: the patch *replaces* the V-component of $h_c$ by $U_V \widehat\mu_\xi$, so the displacement subtracts off the original V-component $P_V h_c$. Then
 
 $$
 \bigl|\mathrm{ACE}_{S} - \mathrm{ACE}_{S}^{\mathrm{linear}}\bigr|
 \;\leq\;
-\frac{L}{2} \|\widehat{\mu}_{\xi}\|^{2}, \tag{9.1}
+\frac{L}{2} \mathbb{E}_{h_c}\bigl[\|\Delta h_c\|_2^2\bigr]
+\;=\;
+\frac{L}{2}\bigl(\|\widehat{\mu}_{\xi}\|^{2} + \mathbb{E}\|P_V h_c\|^2 - 2 \widehat\mu_\xi^\top U_V^\top \mathbb{E}[P_V h_c]\bigr), \tag{9.1}
 $$
 
 where the first-order linear prediction is
 
 $$
-\mathrm{ACE}_{S}^{\mathrm{linear}} := \mathbb{E}_{h_{c}}\!\bigl[ \langle \nabla \mathrm{LD}(h_{c}), U_{V} \widehat{\mu}_{\xi} \rangle \bigr]
-= \widehat{\mu}_{\xi}^{\top} U_{V}^{\top} \mathbb{E}_{h_{c}}[\nabla \mathrm{LD}(h_{c})].
+\mathrm{ACE}_{S}^{\mathrm{linear}} := \mathbb{E}_{h_{c}}\!\bigl[ \langle \nabla \mathrm{LD}(h_{c}), \Delta h_c \rangle \bigr]
+= \widehat{\mu}_{\xi}^{\top} U_{V}^{\top} \mathbb{E}_{h_{c}}[\nabla \mathrm{LD}(h_{c})] - \mathbb{E}_{h_c}[h_c^\top P_V \nabla \mathrm{LD}(h_c)].
 $$
 
-Moreover, the magnitude lower bound
+**Simplification under linear-span GM.** In the linear-span case (M = M_S, V ⊥ M_S), Assumption GM gives $h_c = m_c + \varepsilon_c$ with $m_c \in M_S$, so $P_V m_c = 0$ and $\mathbb{E}[P_V h_c] = \mathbb{E}[P_V \varepsilon_c] = 0$ (zero-mean noise, GM(iii)). The second cross-term in (9.1) vanishes in expectation, leaving
 
 $$
-\bigl|\mathrm{ACE}_{S}^{\mathrm{linear}}\bigr|
-\;\geq\;
-\|\widehat{\mu}_{\xi}\| \cdot \|U_{V}^{\top} \mathbb{E}[\nabla \mathrm{LD}(h_{c})]\| \cdot \cos \theta_{\xi, \nabla}, \tag{9.2}
+\mathbb{E}\|\Delta h_c\|^2 = \|\widehat{\mu}_\xi\|^2 + \mathbb{E}\|P_V \varepsilon_c\|^2 = \|\widehat\mu_\xi\|^2 + r \sigma^2 \quad \text{(under isotropic noise)}.
 $$
 
-holds, where $\theta_{\xi, \nabla}$ is the angle between $\widehat{\mu}_{\xi}$ and $U_{V}^{\top} \mathbb{E}[\nabla \mathrm{LD}(h_{c})]$.
+The leading-order linear prediction simplifies to $\mathrm{ACE}_S^{\mathrm{linear}} = \widehat\mu_\xi^\top U_V^\top \mathbb{E}[\nabla \mathrm{LD}(h_c)]$ when $\nabla \mathrm{LD}(h_c)$ is uncorrelated with $\varepsilon_c$ (which holds when $\nabla \mathrm{LD}$ is approximately constant on the noise scale, i.e., when $L \cdot \sigma \sqrt{r} \ll \|\nabla \mathrm{LD}\|$).
 
-*Proof outline.* Apply Taylor's theorem with integral remainder:
+**Magnitude lower bound (Cauchy–Schwarz, with alignment assumption).** Cauchy–Schwarz gives the *equality*
+
+$$
+\bigl|\mathrm{ACE}_{S}^{\mathrm{linear}}\bigr|_{\mathrm{leading}}
+\;=\;
+\|\widehat{\mu}_{\xi}\| \cdot \|U_{V}^{\top} \mathbb{E}[\nabla \mathrm{LD}(h_{c})]\| \cdot |\cos \theta_{\xi, \nabla}|, \tag{9.2}
+$$
+
+where $\theta_{\xi, \nabla}$ is the angle between $\widehat{\mu}_{\xi}$ and $U_{V}^{\top} \mathbb{E}[\nabla \mathrm{LD}(h_{c})]$. This is *not a lower bound* by itself — Cauchy–Schwarz is an equality with $|\cos\theta|$. To turn (9.2) into a useful lower bound on the magnitude, we additionally assume $|\cos \theta_{\xi, \nabla}| \geq c_0 > 0$ for some calibration constant $c_0$:
+
+$$
+\text{(Alignment Assumption ALN):} \quad
+\bigl|\langle \widehat{\mu}_\xi,\, U_V^\top \mathbb{E}[\nabla \mathrm{LD}(h_c)]\rangle\bigr| \;\geq\; c_0 \cdot \|\widehat\mu_\xi\| \cdot \|U_V^\top \mathbb{E}[\nabla\mathrm{LD}(h_c)]\|. \tag{9.3}
+$$
+
+Under (ALN), (9.2) becomes the lower bound $|\mathrm{ACE}_S^{\mathrm{linear}}|_{\mathrm{leading}} \geq c_0 \cdot \|\widehat\mu_\xi\| \cdot \|U_V^\top \mathbb{E}[\nabla \mathrm{LD}(h_c)]\|$. (ALN) is testable empirically: estimate both vectors and compute the cosine. We pre-register reporting $\widehat{\cos\theta_{\xi,\nabla}}$ alongside the test, with the threshold $c_0 = 0.3$ as the alignment criterion below which we treat the magnitude prediction as inconclusive.
+
+*Proof outline.* Apply Taylor's theorem with integral remainder to $\mathrm{LD}(h + \Delta h) - \mathrm{LD}(h)$:
 
 $$
 \mathrm{LD}(h + \Delta h) - \mathrm{LD}(h)
 = \langle \nabla \mathrm{LD}(h), \Delta h \rangle + \int_{0}^{1} (1 - t) \langle \nabla^{2} \mathrm{LD}(h + t \Delta h) \Delta h, \Delta h \rangle \, dt.
 $$
 
-With $\Delta h = U_{V} \widehat{\mu}_{\xi}$ (the injection patch), $\|\Delta h\| = \|\widehat{\mu}_{\xi}\|$ since $U_{V}$ is orthonormal. The remainder term is bounded by $\frac{1}{2} L \|\Delta h\|^{2} = \frac{L}{2} \|\widehat{\mu}_{\xi}\|^{2}$. Take expectations over $h_{c}$ and $\nabla^{2} \mathrm{LD}$ to get (9.1).
-
-The magnitude bound is Cauchy–Schwarz: $|\langle u, v\rangle| \geq \|u\| \cdot \|v\| \cdot \cos \theta(u, v)$ applied to $u = \widehat{\mu}_{\xi}$ and $v = U_{V}^{\top} \mathbb{E}[\nabla \mathrm{LD}]$. ∎
+With $\Delta h = U_V \widehat\mu_\xi - P_V h$ as derived above, $\|\Delta h\|^2 = \|\widehat\mu_\xi\|^2 + \|P_V h\|^2 - 2 \widehat\mu_\xi^\top U_V^\top P_V h$ since $U_V^\top P_V = U_V^\top$. The remainder is bounded by $\tfrac{1}{2} L \|\Delta h\|^2$ pointwise. Take expectations over $h_c$ to get (9.1). The magnitude relation (9.2) is Cauchy–Schwarz applied to the leading-order term $\widehat\mu_\xi^\top U_V^\top \mathbb{E}[\nabla\mathrm{LD}(h_c)]$. ∎
 
 **Remark 9.4 (Smooth approximation of $\mathrm{LD}$ at argmax flips).**
 $\mathrm{LD}(h) = \mathrm{logit}_{s}(h) - \max_{t \neq s} \mathrm{logit}_{t}(h)$ is non-smooth at points where the argmax over $t \neq s$ changes. Replace the max by log-sum-exp at temperature $\tau$:
@@ -1003,27 +1182,51 @@ We propose to recommend the parametric estimator on the combined basis of (a) th
 
 ## 11. Open questions for Barnábás
 
-This document is a proposal, not a finished result. The following are the specific places where we are uncertain, where the proof outlines are sketches rather than full proofs, or where the constants and assumptions could likely be tightened. We would value your feedback on each.
+This document is a proposal, not a finished result. Several issues identified in earlier drafts have been addressed in this revision (the AI-reviewer feedback log is summarized at the end of this section). The remaining open questions, in order of how blocking they are for the empirical pipeline:
 
 1. **The WLOG re-centering of $\xi$.** Lemma 3.2 claims that any tangent component of $\xi$ can be absorbed into a different choice of $m_{c}(a, b) \in M$, leaving the remaining $\widetilde{\xi}$ orthogonal to the tangent space. We have written this as a first-order claim; the second-order error comes from the curvature of $M$ at $m_{c}$. We have not written out the exponential-map calculation rigorously and would value confirmation that the rate $O(\kappa \cdot \|P^T \xi\|)$ is correct.
 
-2. **Sharpness of the linearization-error term $R_{1}$.** Theorem 4.2's remainder $R_{1}(\sigma, \kappa_{\max})$ is bounded by $O(\sigma^{2} \kappa_{\max}^{2})$. We believe the $\sigma^{2}$ scaling (rather than $\sigma$) is correct because the tangent-orthogonal noise component is what enters the second-order Taylor remainder, not the tangential component. The exact constant has not been tracked through.
+2. **Sharpness of the linearization-error term $R_{1}$.** Theorem 4.2's remainder $R_{1}(\sigma, \kappa_{\max})$ is bounded by $O(\sigma^{2} \kappa_{\max}^{2})$. After the Lemma 4.3 revision (with the Niyogi–Smale–Weinberger–style bound and the $(1 - c_0)$ denominator), we believe the constant in front is now correct up to absolute factors, but we have not propagated this all the way through the squared-norm expansion of $\mathbb{E}[\|r\|^2]$ to track the constant in front of $R_1$.
 
-3. **Exact constants $C_{1}, C_{2}, C_{3}, C_{4}$.** The absolute constants in Theorems 5.2, 6.2, and 6.6 are stated abstractly. Tracking them through the proofs is mechanical but would yield explicit numerical bounds and tighten the practical interpretability of the rates. We have not done this and would welcome guidance on which constants matter most for the application.
+3. **Exact constants $C_{1}, C_{2}^{\mathrm{LC}}, C_{3}, C_{4}$.** The absolute constants in Theorems 5.2(a), 5.2(b)/(5.2a), 6.2, and 6.6 are stated abstractly. Tracking them through the proofs is mechanical but would yield explicit numerical bounds. We have not done this and would welcome guidance on which constants matter most for the application.
 
-4. **The minimax lower bound's matching rate.** The lower bound in Theorem 5.2(b) gives $n \geq C_{2} r \sigma^{2} / \Delta^{2} \log r$ via two-point Le Cam directly. The full $r \sigma^{4} / \Delta^{4}$ rate is obtained by the standard Fano chaining argument over a packing of the alternative class (Tsybakov [tsybakov2009] Theorem 2.7). *The chaining step is the place where we are least confident in the writeup.* We have sketched the argument but not rederived it carefully; in particular the construction of the packing of normal-bundle perturbations of norm $\Delta / \sqrt{2}$ in mutually orthogonal directions in $V$ has not been verified to give the exact $r \sigma^{4} / \Delta^{4}$ constant claimed.
+4. **The conjectured minimax matching rate (5.2b).** Section 5.6 now records the rate $n \geq C_2 r \sigma^4 / \Delta^4$ as a *conjecture*, not a theorem, with a pointer to Ingster's chi-squared mixture argument as the canonical template. We would value Barnábás's view on whether this rate (a) actually holds in our setting after Lemma 5.3 reduces to the Gaussian sequence model on projected residuals, and (b) is worth proving rigorously for the BlackBoxNLP submission, or whether downgrading to conjecture is the right call. We currently lean toward the latter, given empirical work is the binding constraint on the timeline.
 
-5. **Operator-norm Wedin vs Frobenius Davis–Kahan in Theorem 6.2.** We use the operator-norm form of Wedin because we believe it gives a constant that is sharper by factor $\sqrt{K}$. We have not double-checked that the dependence on $K$ in the OLS Frobenius bound (Lemma 6.3) does not re-introduce the $\sqrt{K}$ that operator-norm Wedin saves.
+5. **Curve-case drift bound $\eta_0$.** Theorem 5.2(C) replaces the strict $V \subseteq \bigcap_p N_p M$ assumption by the explicit drift bound $\sup_p \|P_V (P^N_p - P^N_{p_0}) P_V\|_{\mathrm{op}} \leq \eta_0$. We have not derived an a-priori bound on $\eta_0$ in terms of the helix curvature $\kappa_{\max}$; we expect $\eta_0 = O(\kappa_{\max} \cdot \mathrm{diam}(M))$ for short curves and $O(1)$ for long curves where the tangent rotates many times. Confirming this would tighten the curve-case theorem.
 
-6. **Cross-fitting under the alternative.** Theorem 7.2 gives asymptotic normality at the null. The non-asymptotic version, with explicit finite-sample corrections at the alternative, is what would actually be used to set the sample size in the experiments. This is a standard but tedious calculation in the Chernozhukov et al. 2018 machinery; we have not done it.
+6. **Operator-norm Wedin vs Frobenius Davis–Kahan in Theorem 6.2.** We use the operator-norm form of Wedin because we believe it gives a constant that is sharper by factor $\sqrt{K}$. We have not double-checked that the dependence on $K$ in the OLS Frobenius bound (Lemma 6.3) does not re-introduce the $\sqrt{K}$ that operator-norm Wedin saves.
 
-7. **Higher-order Taylor for Proposition 9.3.** The remainder bound is at order $L \|\widehat{\mu}_{\xi}\|^{2} / 2$. Higher-order corrections involving $\nabla^{3} \mathrm{LD}$ would tighten the bound when the LD landscape has bounded third derivatives, which holds generically but has not been verified for our specific transformer readouts. The synthetic toy in the companion document found a magnitude-vs-Taylor ratio of about $5\times$ in one calibrated case; understanding whether this is mostly argmax-flip non-smoothness or higher-order Taylor would help.
+7. **Cross-fitting under the alternative.** Theorem 7.2 gives asymptotic normality at the null, and §7.3 now explicitly verifies Neyman-orthogonality at the null. The non-asymptotic version under the alternative ($\mu_\xi \neq 0$) requires checking that the manifold-estimation residual bias of order $\|\widehat U - U\|_{\mathrm{op}} \cdot \|\mu_\xi\|$ is $o_\mathbb{P}(\|\mu_\xi\|^2)$, which holds when Theorem 6.2 gives $\sin\theta_{\max} = o_\mathbb{P}(\Delta)$. The threshold relating $n_c$, $\sigma$, and $\Delta$ that ensures this has not been worked out explicitly.
 
-8. **The argmax-flip / smooth-max question.** Real logit-difference $\mathrm{LD}(h) = \mathrm{logit}_{s}(h) - \max_{t \neq s} \mathrm{logit}_{t}(h)$ is non-smooth at points where the argmax over $t \neq s$ flips. We propose using log-sum-exp at temperature $\tau$ as a smooth surrogate, but the dependence of the Hessian bound $L$ on $\tau$ near argmax flips ($L = O(1/\tau)$) means the bound deteriorates as $\tau \to 0$. We do not have a clean way to handle this and would value advice on whether a different smoothing (e.g., random tie-breaking) gives a uniformly bounded $L$.
+8. **Higher-order Taylor for Proposition 9.3.** The remainder bound is at order $L \|\widehat{\mu}_{\xi}\|^{2} / 2$. Higher-order corrections involving $\nabla^{3} \mathrm{LD}$ would tighten the bound when the LD landscape has bounded third derivatives, which holds generically but has not been verified for our specific transformer readouts. The synthetic toy in the companion document found a magnitude-vs-Taylor ratio of about $5\times$ in one calibrated case; understanding whether this is mostly argmax-flip non-smoothness or higher-order Taylor would help.
 
-9. **Anisotropic noise generalization.** The remarks in Section 4 sketch the generalization of Theorem 1 to anisotropic noise via effective rank $k_{\mathrm{eff}} = \mathrm{tr}(P^N \Sigma_{\varepsilon})^{2} / \mathrm{tr}((P^N \Sigma_{\varepsilon})^{2})$. We have not propagated this through Theorems 2 and 3. Real activations after layer normalization are unlikely to be isotropic; the empirical work will need the anisotropic version.
+9. **The argmax-flip / smooth-max question.** Real logit-difference $\mathrm{LD}(h) = \mathrm{logit}_{s}(h) - \max_{t \neq s} \mathrm{logit}_{t}(h)$ is non-smooth at points where the argmax over $t \neq s$ flips. We propose using log-sum-exp at temperature $\tau$ as a smooth surrogate, but the dependence of the Hessian bound $L$ on $\tau$ near argmax flips ($L = O(1/\tau)$) means the bound deteriorates as $\tau \to 0$. We do not have a clean way to handle this and would value advice on whether a different smoothing (e.g., random tie-breaking) gives a uniformly bounded $L$.
 
-10. **What is the right noise model for activations?** Real activations are a deterministic function of the input plus within-prompt structural variation. Modeling this as i.i.d. sub-Gaussian noise is standard but is a substantial idealization. We would welcome perspective on whether sub-Weibull (heavier-tailed) noise is more realistic and how the rates would change.
+10. **What is the right noise model for activations?** Real activations are a deterministic function of the input plus within-prompt structural variation. Modeling this as i.i.d. sub-Gaussian noise is standard but is a substantial idealization. After Theorem 4.10's anisotropic generalization is in place, the remaining question is whether the noise is sub-Weibull (heavier-tailed) and how the rates would change. We will diagnose this empirically by examining tails of the residual distribution.
+
+### 11.1 Issues addressed in this revision (responding to AI-reviewer feedback)
+
+The previous draft of this document was reviewed by an AI reviewer (Stanford ML Group's `paperreview.ai`). Most of the issues raised were valid and have been addressed:
+
+- **Notation consistency in Theorem 4.2.** The reviewer claimed the theorem statement uses $\mu_\varepsilon, \Sigma_\varepsilon$ but the proofs use $\mu_\xi, \Sigma_\xi$. On re-reading, the theorem already used $\xi$-notation correctly; the reviewer hallucinated this bug. We have nevertheless added explicit text to Theorem 4.2(a)(b) explaining why the $\varepsilon$-contributions cancel under GM(iii), to forestall the same misreading by future readers.
+
+- **The $V \subseteq \bigcap_p N_p M$ assumption is too strong for a curved manifold.** Addressed: Theorem 5.2 now splits into case (L) (linear span, where the assumption is automatic) and case (C) (curve, where it is replaced by an explicit drift bound $\eta_0$).
+
+- **The $r\sigma^4/\Delta^4$ minimax lower bound proof is incoherent.** Addressed: Section 5.6 now proves only the two-point Le Cam bound (5.2a) at rate $\sigma^2/\Delta^2$, and explicitly downgrades the matching rate (5.2b) to a conjecture with proper Ingster citations.
+
+- **Lemma 4.3 constants and $P^N\delta$ vs $P^T\delta$ separation.** Addressed: Lemma 4.3 now has an explicit $(1 - c_0)$ denominator, distinguishes tangent vs normal contributions, and cites Aamari–Levrard for the modern statement.
+
+- **Anisotropic noise needs a stand-alone theorem.** Addressed: Remark 4.10 promoted to Theorem 4.10 with full statement, estimator $\widehat k_{\mathrm{eff}}$, and concentration via Hanson–Wright.
+
+- **Cross-fitting Neyman-orthogonality not shown.** Addressed: §7.3 now contains an explicit Gateaux-derivative calculation verifying Neyman-orthogonality at the null and bounding the residual bias under the alternative.
+
+- **Permutation section lacks Freedman–Lane reference and exchangeability conditions.** Addressed: §8 now cites Freedman–Lane, Anderson–Robinson, Hemerik–Goeman; states the exchangeability condition explicitly as $h \perp y \mid \phi(a, b)$; adds Remarks 8.4 and 8.5 on sparse bins and exchangeability diagnostics.
+
+- **$D_{\max}^2$ in composition bound is loose.** Addressed: Remark 6.7 distinguishes uncentered $D_{\max}$ from centered $D_{\max}^{\mathrm{ctr}}$ and notes the typical $0.1$–$0.3$ ratio, plus the unstable-subspace sharpening.
+
+- **Reach and common-normal verification deferred.** Addressed: Remark 3.6 lists explicit empirical estimators $\widehat\tau, \widehat\kappa_{\max}, \widehat\sigma_{\mathrm{eff}}, \widehat\eta$ and pre-registers them as filters before the main test.
+
+- **Missing related-work connections (DMET, diffusion-geometry estimators, local-quadratic models).** Addressed: references added to bibliography. Discussion in §10 still primarily empirical.
 
 ---
 
@@ -1083,13 +1286,15 @@ A second expected objection is that wrong examples may simply be harder, larger,
 
 For BlackboxNLP, the necessary mathematical content is:
 
-1. Exact linear-span expectation calculation (Theorem 4.2(a)).
+1. Exact linear-span expectation calculation (Theorem 4.2(a)) with anisotropic generalization (Theorem 4.10).
 2. Finite-sample null concentration (Theorem 4.2(c)).
-3. Matched permutation conditional validity (Theorem 8.3).
+3. Matched permutation conditional validity (Theorem 8.3) with Freedman-Lane-style fallback.
 4. Span-recovery perturbation bound (Theorem 6.2).
-5. Causal Taylor proposition with corrected displacement and Hessian-bounded remainder (Proposition 9.3).
+5. Composition bound (Theorem 6.6) with centered tightening (Remark 6.7).
+6. Causal Taylor proposition with corrected displacement and Hessian-bounded remainder (Proposition 9.3).
+7. Cross-fitting Neyman-orthogonality (§7.3 Gateaux calculation).
 
-The minimax lower bound is bonus content; we plan to include it as conjectural with sketched intuition rather than as a stated theorem. Curved-manifold extensions are deferred to follow-up work.
+The matching minimax lower bound (5.2b) is conjectural in this revision; we present only the two-point Le Cam bound (5.2a) as proven. The curved-manifold version of Theorem 5.2 (case (C)) replaces the strict common-normal-bundle assumption by an empirical drift bound $\eta_0$.
 
 ### 12.6 Venue
 
@@ -1157,3 +1362,27 @@ The synthetic toy validation (passed 27 of 27 pre-registered checks) gives us co
 - [wang2022] K. Wang, A. Variengien, A. Conmy, B. Shlegeris, and J. Steinhardt. Interpretability in the wild: a circuit for indirect object identification in GPT-2 small. *ICLR*, 2023.
 
 - [kantamneni2025] S. Kantamneni and M. Tegmark. Language models use trigonometry to do addition. *arXiv:2502.00873*, 2025.
+
+- [ingster1993] Y. I. Ingster. Asymptotically minimax hypothesis testing for nonparametric alternatives, I–III. *Mathematical Methods of Statistics*, 2(2):85–114, 2(3):171–189, 2(4):249–268, 1993.
+
+- [ingster2003] Y. I. Ingster and I. A. Suslina. *Nonparametric Goodness-of-Fit Testing under Gaussian Models*. Springer Lecture Notes in Statistics 169, 2003.
+
+- [baraud2002] Y. Baraud. Non-asymptotic minimax rates of testing in signal detection. *Bernoulli*, 8(5):577–606, 2002.
+
+- [collier2017] O. Collier, L. Comminges, and A. B. Tsybakov. Minimax estimation of linear and quadratic functionals on sparsity classes. *The Annals of Statistics*, 45(3):923–958, 2017.
+
+- [aamari2019] E. Aamari and C. Levrard. Nonasymptotic rates for manifold, tangent space and curvature estimation. *The Annals of Statistics*, 47(1):177–204, 2019.
+
+- [freedmanlane1983] D. Freedman and D. Lane. A nonstochastic interpretation of reported significance levels. *Journal of Business & Economic Statistics*, 1(4):292–298, 1983.
+
+- [andersonrobinson2001] M. J. Anderson and J. Robinson. Permutation tests for linear models. *Australian & New Zealand Journal of Statistics*, 43(1):75–88, 2001.
+
+- [hemerik2018] J. Hemerik and J. Goeman. Exact testing with random permutations. *TEST*, 27:811–825, 2018.
+
+- [dmet2025] *DMET (Discrete Manifold Evolution Theory of large language models).* *arXiv:2505.20340*, 2025. *Author list to be filled in from arXiv metadata before submission. Cited as related framework: LLM trajectories on low-dimensional manifolds.*
+
+- [diffgeom2024] *Diffusion-geometry estimators for tangent spaces, dimension and curvature.* *arXiv:2411.04100*, 2024. *Author list to be filled in from arXiv metadata before submission. Cited as nonparametric robustness check for $M$-estimation.*
+
+- [regdim2025] *Regression-based intrinsic dimension with curvature modeling.* *arXiv:2510.15141*, 2025. *Author list to be filled in from arXiv metadata before submission. Cited as alternative for tangent/curvature validation.*
+
+- [conmy2023] A. Conmy, A. Mavor-Parker, A. Lynch, S. Heimersheim, and A. Garriga-Alonso. Towards automated circuit discovery for mechanistic interpretability. *NeurIPS*, 2023. *Cited for the activation-patching / downstream-forward-pass formalism used in Definition 9.2.*

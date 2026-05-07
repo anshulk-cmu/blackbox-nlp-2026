@@ -32,3 +32,4 @@ dependencies:
       - huggingface_hub==0.25.1
       - accelerate==1.0.1
       - safetensors==0.4.5
+      - python-dotenv==1.0.1
