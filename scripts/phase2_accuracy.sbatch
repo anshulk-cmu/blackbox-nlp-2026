@@ -1,8 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=blackbox_phase2_acc
-#SBATCH --partition=general
-#SBATCH --gres=gpu:A100_80GB:1
-#SBATCH --cpus-per-task=8
+#SBATCH --gres=gpu:A6000:1
+#SBATCH --cpus-per-task=12
 #SBATCH --mem=64G
 #SBATCH --time=02:00:00
 #SBATCH --output=/data/user_data/%u/blackbox/logs/%x_%j.out
@@ -11,6 +10,10 @@
 # Phase 2: accuracy reproduction. Per-model.
 # Usage:  sbatch scripts/phase2_accuracy.sbatch <model_key>
 #         where <model_key> in {gpt-j-6b, pythia-6.9b, llama-3.1-8b}
+#
+# A6000 (48GB) fits Llama 3.1 8B bf16 (~16GB weights + KV cache + activations)
+# comfortably with batch 32. Switch to A100_80GB:1 if A6000 is contended:
+#   sbatch --gres=gpu:A100_80GB:1 scripts/phase2_accuracy.sbatch <model_key>
 
 set -e
 
