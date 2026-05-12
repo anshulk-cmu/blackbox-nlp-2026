@@ -1,459 +1,253 @@
-# Observations and Open Directions — `paper_math.md` Review
+# Observations and Open Directions — `paper_math.md` Second Pass
 
-*Working notes from a line-by-line re-read of [paper_math.md](paper_math.md). Not decisions — places where the current framing may be too narrow, too restrictive, or doing more implicit work than it advertises, and alternative paths worth investigating before the empirical pipeline locks in.*
+*Working notes from a second line-by-line read of [paper_math.md](paper_math.md), now at commit `f5f8b89`. The first pass (commit `b56397d`) reviewed an earlier draft; the math has since been rewritten substantially. Roughly 60% of the first-pass concerns are now addressed in the document. The remaining 40% stays here, joined by a smaller set of new observations the rewrite has surfaced. Line references throughout point at the current 1388-line file.*
 
-*Date: 2026-05-11*
-*Reader pass: Anshul, after the Riemannian / topology discussion.*
+*Date: 2026-05-11.*
+*Reader pass: Anshul, after the rewrite that responds to AI-reviewer feedback (see [paper_math.md:1207-1230](paper_math.md#L1207-L1230)).*
 
 ---
 
 ## 0. Reading frame
 
-This document is a list of **observations**, **concerns**, and **directions worth exploring**. It is explicitly *not* a list of objections to the math as stated. The proofs in [paper_math.md](paper_math.md) are largely standard once their assumptions are accepted; the interesting question is whether the assumptions match what real activations will look like, and whether the deterministic Euclidean framing leaves money on the table.
+Same posture as last pass: this is a list of observations and directions, not a list of objections. The proofs, where they exist, are largely standard once their assumptions are accepted; the interesting questions remain about whether the assumptions match real activations and whether the framing leaves the most informative signal on the table.
 
-Themes that keep recurring across the read:
+What changed since the first pass:
 
-- The ambient Euclidean metric is doing more work than the document advertises.
-- The "three failure modes" decomposition may be too coarse for the helix's actual internal structure.
-- Several assumptions are stated as small-constant regimes whose verifiability is left implicit.
-- Topology in its strict sense is the *wrong* frame for the helix; *geometric measure* and *harmonic analysis* on the parametrization are sharper for this specific object.
-- The causal step is mathematically the weakest, yet narratively the heaviest in the framing section.
+- The κ_max / σ·κ_max audit is now first-class. [Remark 3.6](paper_math.md#L255-L262) pre-registers `(τ̂, κ̂_max, σ̂_eff, η̂)` as filters before the test runs.
+- Anisotropic noise has its own theorem: [Theorem 4.10](paper_math.md#L484-L525), with `k_eff` and a Hanson–Wright proof.
+- The matching minimax rate is downgraded to a conjecture, with the two-point Le Cam bound presented as the only proven lower bound. The honest separation at [paper_math.md:705-737](paper_math.md#L705-L737) is the right call.
+- The strict `V ⊆ ⋂_p N_p M` condition for the curve case is replaced by an explicit drift bound `η_0` ([Theorem 5.2(C)](paper_math.md#L567-L573)).
+- Permutation now cites Freedman–Lane, Anderson–Robinson, Hemerik–Goeman, and states exchangeability as `h ⊥ y | φ(a, b)` ([§8.2](paper_math.md#L1017-L1049)).
+- Cross-fitting Neyman-orthogonality is verified by an explicit Gateaux calculation at [paper_math.md:957-998](paper_math.md#L957-L998).
 
-Nothing here is a recommendation to change the math. The point is to log *where to look harder* before we sign off.
+What did not change, and now stands out as the central remaining gap, is the per-period harmonic decomposition. The three failure modes ([Definition 2.6](paper_math.md#L138-L158)) are still defined topologically (on-curve, in-span off-curve, off-span), with no mechanism in the math for separating "the model lost the ones place" from "the model lost the tens place." Section 1 below makes the case for closing this gap, since it is both the highest-leverage methodological extension and the cheapest one to add.
 
----
-
-## 1. Ambient Euclidean metric vs intrinsic geometry
-
-### 1.1 The closest-point projection is ambient
-
-`Π_M(h) := arg min_{p ∈ M} ‖h − p‖_2` at [paper_math.md:54](paper_math.md#L54) uses the ambient Euclidean norm. Two consequences:
-
-- Near a fold in the helix (or any high-curvature region), the *ambient-closest* point may differ from the *geodesically-closest* point. The two coincide only when the residual is normal to the manifold at the projected point — a local property within reach.
-- The Taylor remainder bound `‖R_2‖_2 ≤ (κ_max/2) ‖P^N δ‖_2^2` at [paper_math.md:295](paper_math.md#L295) is the price of using ambient distance. It's a second-order correction, but it shows up as `R_1(σ, κ_max) = O(σ² κ_max²)` in the population mean of `T_n` at [paper_math.md:263](paper_math.md#L263).
-
-**Direction worth exploring:** Compute `T_n^geodesic` using arc-length distance along `M_C` (cheap, because `g(t)` is closed-form) and compare to ambient `T_n`. If they differ meaningfully, that itself is interpretable evidence: wrong activations leave the helix in directions where curvature matters. If they agree, the second-order bound is empirically tight and the simpler statistic is fine.
-
-### 1.2 The reach assumption is binary, not graded
-
-REG at [paper_math.md:229](paper_math.md#L229) requires `τ(M) ≥ τ_min` uniformly. The paper notes at [paper_math.md:63](paper_math.md#L63) that the inequality `τ(M) ≥ 1/κ_max` "goes the wrong way" and that reach is governed by both local curvature and global bottlenecks (weak feature size).
-
-For the helix with components at `T = 2, 5, 10, 100`, the high-frequency `T = 2` component oscillates rapidly along the long linear axis. The reach *near* the winding directions could be small even if the linear curve has no global bottleneck. Verifying `τ_min` empirically is described as a sanity check; it might deserve to be a first-class diagnostic, with the test downgraded (or the local-PCA fallback invoked) when reach drops below a threshold.
-
-**Direction:** Estimate local reach `τ(p)` along the curve for each model and layer. If it varies by more than ~`2×` across the support, stratifying `T_n` by reach regime is more honest than reporting a single statistic.
-
-### 1.3 SPD / log-Euclidean on activation covariances
-
-A complementary lens: instead of treating each activation as a point in `ℝ^d`, represent local activation structure by its covariance `Σ(h) ∈ SPD(d)` over a neighborhood. SPD(d) has a natural Riemannian metric (affine-invariant or log-Euclidean). Wrong activations could have *correctly placed means* but *anomalous covariance structure* — higher within-class variance, off-diagonal coupling, rank collapse.
-
-This is overkill for the headline test, but it is the right tool if the empirical residuals turn out to be small in mean and large in spread. The current `T_n` confuses these two regimes; an SPD-based statistic separates them.
-
-**Direction:** Compute per-bin activation covariance for correct and wrong populations. Compare on the SPD manifold (Riemannian distance). Defer unless the residual mean is small but the spread is large.
-
-### 1.4 Coordinate-free formulation
-
-Most of Section 4 of [paper_math.md](paper_math.md) is written in coordinates after picking an orthonormal basis. Many of the bounds (Laurent–Massart, Wedin) are coordinate-free in their natural form, and re-deriving them coordinate-free might reveal that the `d`-dependence is artifactual.
-
-**Direction:** Restate Theorem 4.2 in operator-norm / trace-norm language without committing to a basis. If the bound's `k`-dependence collapses to `k_eff` more naturally in coordinate-free form, that simplifies the anisotropic generalization (Remark 4.10).
+A second theme is the rewrite's strategic posture. [Section 12](paper_math.md#L1233-L1320) explicitly accepts a workshop-grade scope: BlackboxNLP target, no main-conference push, the matching minimax bound and the cross-domain generalization both deferred. That posture is defensible, but it changes what counts as "still live." A few items below would matter for a main-conference submission and are correspondingly low priority for the current target.
 
 ---
 
-## 2. Topology is the wrong frame; geometric measure is the right one
+## 1. The per-period harmonic decomposition is still missing, and it is the single most informative addition
 
-This came directly out of conversation: the helix `g(t) = u_0 + t·u_lin + Σ_T (cos/sin terms)` is **contractible** — the linear `t · u_lin` drift means the curve never closes on itself. Persistent homology gives `H_0 = 1, H_k = 0 (k ≥ 1)`: one arc, no loops, no voids. PH literally cannot diagnose anything about this geometry. Any topological invariant classifies the helix as a smooth contractible 1-manifold and stops talking.
+The helix curve is parameterized by frequencies `T ∈ {2, 5, 10, 100}` ([Definition 2.1](paper_math.md#L91-L107)). Each `(cos_T, sin_T)` pair carves out a circle inside the helix span. A wrong activation can sit off-helix in any of these circles independently: the ones-place encoder (`T = 10`) can fail while the tens-place encoder (`T = 100`) succeeds, or vice versa.
 
-The "voids between windings" intuition is *geometric*, not topological: `M_C` is Hausdorff-dimension-1 inside the dim-9 (or 8) span `M_S`, so it's Lebesgue-null in `M_S`. Wrong activations in `M_S \ M_C` are not in topological holes; they are in regions of `M_S` that the curve never visits at integer parameter values.
+The current statistic `T_n^V` collapses this into a single scalar. The math at [paper_math.md:551-558](paper_math.md#L551-L558) projects the residual onto a single subspace `V` and reports its squared norm, averaged. Two activations with the same `||P_V r||²` could correspond to a clean failure in `T = 10` only, or to a diffuse failure spread across `T = 5, 10, 100`. The headline statistic does not distinguish them.
 
-**Implications:**
+What the per-period decomposition would buy:
 
-- The three failure modes at [paper_math.md:152-156](paper_math.md#L152-L156) — on-curve, off-curve in-span, off-span — are a topological-flavored tripartition that misses internal structure of mode (b).
-- The within-span residual `r_within = Π_{M_S}(h) − Π_{M_C}(h)` is the right *direction*, but its norm is a coarse summary statistic.
+1. A **digit-scale failure profile** per wrong activation. For each `T`, compute `||P_{V_T} r(h_w)||²` where `V_T = span(u_cos^T, u_sin^T)`. The 4-tuple is the failure signature. Reporting it converts "off-manifold" into a mechanistic claim about which numerical place broke.
+2. A **stratified causal narrative**. If wrong activations cluster on `T = 10` failures for high-carry inputs and `T = 100` failures for high-magnitude inputs, that is the kind of finding that makes a workshop reviewer remember the paper. It is also exactly the structure KT's representation predicts but does not test.
+3. **A sharper test under cancellation**. If a model's wrong activations have small mean residual on aggregate but large spread across `T`, the scalar statistic loses power while the per-`T` decomposition picks it up. The matched permutation framework adapts cleanly: run the test once per `T`, apply a step-down correction across the four tests.
 
-### 2.1 Arc-length residual to the integer lattice
+The mathematical cost is small. The per-`T` projections are already in use by the parametric estimator ([Definition 6.1](paper_math.md#L765-L774)). The chi-squared null calibration carries through directly with `r` replaced by `r_T = 2`. A new Theorem could state per-period validity in two pages.
 
-For `h ∈ M_S`, recover the parameter `t̂(h)` via the closed-form parametrization. Define
+The interpretive cost of *not* adding it is asymmetric. If the empirical pipeline runs scalar `T_n^V` and finds a positive effect, a reviewer will ask: "But which digit-place broke?" If the pipeline runs the per-`T` decomposition first and reports the profile, the answer is in the table.
 
-$$d_\text{lattice}(h) := \min_{k \in \mathbb{Z} \cap [0, A]} |t̂(h) − k|.$$
-
-This directly tests the integer-lattice hypothesis. It is sharper than `r_within(h)` because two activations with the same `‖r_within‖` could correspond to a near-miss to integer (small `d_lattice`) versus a half-integer parameter (`d_lattice ≈ 0.5`).
-
-**Direction:** Add `d_lattice` as a secondary statistic. If wrong activations cluster at half-integer parameters, that's a specific narrative: the model is "between numbers" rather than "off the curve." If `d_lattice` is uniform on `[0, 0.5]`, the failure has no integer-lattice structure and the within-span residual is the wrong thing to report.
-
-### 2.2 Per-period phase residuals
-
-Each `(cos_T, sin_T)` pair carves out an `S¹` inside `M_S`. The activation's projection onto that 2D subspace defines a phase. For wrong activations, the phase might be wrong at *some* `T` but right at others.
-
-**Direction:** Decompose the residual into a `K`-tuple of per-period failure indicators. Could replace the binary "off-curve in-span" with a *digit-scale failure profile*: did the ones-place encoder fail (`T = 10`), the tens-place (`T = 100`), or both?
-
-### 2.3 Fourier / harmonic analysis in `t`
-
-`T = 10` corresponds to the ones-place modulus; `T = 100` to the tens-place modulus. Failure at `T = 10` means the model lost track of the ones digit; failure at `T = 100` means the tens digit. Reporting per-`T` residual decomposition would let the paper make a *mechanistic* claim sharper than "off-manifold": *"the model fails on carries because the `T = 10` component is wrong while `T = 100` is right."*
-
-**Direction:** This is potentially the single most interpretively valuable extension. The cost is small (the projections are already used in the parametric estimator), and the gain is a *causal narrative per failure mode*.
-
-### 2.4 The 1D parameter `t̂` is identifiable from `M_S`
-
-The parametrization `g(t)` is injective on `[0, A]` for any non-degenerate combination of frequencies. So `t̂(h)` is well-defined for any `h ∈ M_S` via solving `g(t̂) = Π_{M_C}(h)`. This means we have a 1D *intrinsic coordinate* along the manifold. Many of the tests above use this implicitly.
-
-**Direction:** Treat `t̂` as a first-class observable. Plot the empirical distribution of `t̂(h_w) − t̂(h_c)` for matched pairs `(a, b)`; this is the "parameter slip" induced by being wrong. If it's centered at zero with spread, the failure is symmetric drift. If it's biased (e.g., wrong answers consistently project to *higher* `t̂`), there's a directional story.
+**Direction.** Add a short Section 5.8 stating per-period validity. Run the per-`T` decomposition as part of the headline empirical pipeline, not as an appendix. If carries map to `T = 10` failures specifically, lead the empirical paper with that finding.
 
 ---
 
-## 3. Curvature and `κ_max` assumption
+## 2. The causal section remains the weakest part of the math
 
-### 3.1 The `σ · κ_max ≤ c_0` constraint
+Three concerns from the first pass are still live.
 
-REG at [paper_math.md:229](paper_math.md#L229) requires this. The `T = 2` and `T = 5` components have extrinsic curvature scaling as roughly `(2π/T)² · ‖u_*‖` which is largest for small `T`. If the recovered helix has nontrivial amplitude at `T = 2` (the degenerate component, see [paper_math.md:108](paper_math.md#L108)) or `T = 5`, the curvature constraint may be tight.
+### 2.1 The injection patch is a population summary
 
-**Direction:** Compute `κ_max` empirically per model and layer (closed-form trig calculation from the recovered `{u_*}` directions). Check `σ̂ · κ̂_max` against `c_0 ∈ (0, 1]`. If the constraint is violated anywhere in the data support, the Theorem 1 remainder term is no longer `O(σ² κ_max²)` small; it competes with the headline signal.
+[Definition 9.2](paper_math.md#L1071-L1092) constructs `ACE_S` using `Patch(h_c, V, 1, μ̂_ξ)`. The patch direction `μ̂_ξ` is the average wrong-population displacement. An individual wrong activation has its own `ξ̂(a, b)`. Patching with the average reproduces the central-tendency failure but not the variation around it.
 
-### 3.2 The `m = 8` vs `m = 9` ambiguity for integer inputs
+The cleaner experiment is paired patching. For each wrong activation `h_w(a, b)`, find a correct activation `h_c(a', b')` with `φ(a, b) = φ(a', b')` (the matched permutation framework provides this) and patch `Patch(h_c(a', b'), V, 1, ξ̂(a, b))`. The ACE estimated this way is per-problem, not population-average. The decomposition into "consistent population shift" versus "problem-specific failure" is then directly readable from the variance of the per-pair effects.
 
-Remark 2.2 at [paper_math.md:107-110](paper_math.md#L107-L110): `sin(πa) ≡ 0` at integer `a`, so the `T = 2` sin direction is unidentifiable from integer-only data. The paper drops it. But this is *observational identifiability*, not *structural identifiability*: if any internal computation (carry propagation, e.g.) writes to the `sin(πa)` direction *off* the integer lattice, the test cannot see it on-lattice. Wrong activations that drift off-lattice into that direction would be invisible to a basis fit from on-lattice correct data.
+**Direction.** Add a paired-patching variant `ACE_S^paired` to [Definition 9.2](paper_math.md#L1070-L1092). Report both. If they agree, the population summary is fine; if they disagree, the per-problem story is the one to report.
 
-**Direction:** Verify that the `sin(πa)` direction is not used by the model. Inject a non-integer parameter (e.g., continuous interpolation between integer prompts via embedding-space interpolation) and check whether the `T = 2` sin component activates. If so, the basis is incomplete and `m = 8` is an under-fit; the off-span residual will include an artifactual component.
+### 2.2 The Alignment Assumption ALN has an ad-hoc threshold
 
-### 3.3 Reach near linear-axis endpoints
+The rewrite adds (ALN) at [paper_math.md:1136-1143](paper_math.md#L1136-L1143), with calibration constant `c_0 = 0.3` declared as the threshold below which the magnitude prediction is "inconclusive." The number 0.3 is unjustified in the doc. Any reviewer will ask: why not 0.2, why not 0.5?
 
-The linear axis `u_lin` extends across `[0, A]`. At `t = 0` and `t = A`, the curve has open endpoints. The reach near endpoints is well-defined for an open curve, but the projection's *uniqueness* at the boundary can fail (closest point becomes ambiguous when `h` lies "past" the endpoint).
+Two possible defenses:
 
-**Direction:** Check whether any correct or wrong activations project to `t̂` near `0` or `A`. If so, those samples should be excluded or treated separately, similar to how kernel methods handle boundary effects. The number of affected samples is likely small (most `a + b` lie well inside `[0, 198]`) but the affected region may be enriched in `s = 0` and `s = 198` answers, which are special cases.
+1. Pre-register `c_0` based on the synthetic toy. If the toy gives `cos θ` distributions for clean alignment and adversarial misalignment that are well-separated, the threshold falls out of that calibration.
+2. Drop the threshold and report `cos θ` as a continuous quantity, with the magnitude prediction graded by it. The reviewer-facing claim is then "alignment is `cos θ = X`, predicted ACE is `Y`, observed ACE is `Z`; the prediction holds at the X-th percentile of the noise floor."
 
-### 3.4 Sectional vs extrinsic curvature
+The second is cleaner. Putting a single number in front of an inequality looks like p-hacking even when it is not.
 
-Section 1.3 of [paper_math.md](paper_math.md) is explicit at [paper_math.md:65](paper_math.md#L65) that for a 1D curve, the right object is the second fundamental form, not sectional curvature. This is correct, but Remark 3.5 at [paper_math.md:229](paper_math.md#L229) still says "maximum sectional curvature is bounded by `κ_max`." Worth re-checking that all uses of `κ_max` consistently refer to `‖II_p‖_op`, not a sectional invariant that doesn't apply.
+**Direction.** Replace the binary "above/below 0.3" framing with a continuous calibration plot (predicted vs observed ACE, colored by `cos θ`) in the empirical paper. The math doc can drop the threshold entirely.
 
----
+### 2.3 The argmax-flip surrogate is acknowledged but not solved
 
-## 4. Noise model concerns
+[Remark 9.4](paper_math.md#L1154-L1161) introduces `LD_τ` via log-sum-exp at temperature `τ`, and acknowledges the Hessian bound `L = O(1/τ)` near argmax flips. This is open question 9 at [paper_math.md:1203](paper_math.md#L1203). The rewrite is honest about the obstruction but offers no resolution.
 
-### 4.1 Isotropic Gaussian is implausible after layer normalization
+Three options worth piloting empirically:
 
-Layer normalization constrains activations to a `(d-1)`-sphere of radius `√d` (approximately, after the rescale). Sub-Gaussian noise around this constraint is *not* isotropic in `ℝ^d`; it lives tangent to the sphere. Assumption GM(iii) at [paper_math.md:200](paper_math.md#L200) sets `Σ_ε = σ² I_d`, the simplest case, but probably wrong for any layer immediately downstream of a normalization.
+1. Use the **signed gap** `LD(h) − LD(h')` as the statistic. The argmax flip becomes a discrete event to count, not a smoothness obstruction.
+2. Use **softmax probability** at the answer token, `softmax(logits)[s]`. Smooth everywhere, uniformly bounded Hessian, and arguably the more natural quantity since the model's behavior is determined by the probability distribution, not the logit difference.
+3. Stratify the causal analysis by whether the patch crosses an argmax boundary, and report the within-stratum effect separately.
 
-**Direction:** Theorem 4.2's effective-rank remark at [paper_math.md:452-459](paper_math.md#L452-L459) handles anisotropic noise via `k_eff = (tr P^N Σ_ε)² / tr((P^N Σ_ε)²)`. Estimate `Σ_ε` empirically per layer and report `k_eff` alongside `k`. If `k_eff ≪ k`, the test is sharper than the isotropic version suggests and the paper should claim the tighter bound. If `k_eff ≈ k`, the isotropic approximation is empirically valid.
+Option 2 is the simplest. It also has the advantage that "the patch increased the answer probability" is a more reviewer-friendly claim than "the patch increased the logit difference."
 
-### 4.2 Same noise across populations
-
-Assumption GM(iii) requires `Σ_ε^c = Σ_ε^w`. Remark 4.9 at [paper_math.md:443-450](paper_math.md#L443-L450) acknowledges this. For wrong vs correct populations on the same input distribution, this is plausible. But for wrong populations enriched in high-carry / boundary-of-difficulty problems, the noise structure could systematically differ — high-carry inputs may have more attention-head activity, hence higher residual-stream variance.
-
-**Direction:** Empirically estimate `Σ_ε^c` and `Σ_ε^w` per layer and bin. Test `Σ_ε^c = Σ_ε^w` via a Box's-M-style test stratified by bin. The matched permutation in Section 8 only controls for the *mean* of the input difficulty, not the noise structure. A mismatch here is not fatal (Remark 4.9 gives a correction term) but it does change the test's null distribution.
-
-### 4.3 Sub-Gaussian vs sub-Weibull tails
-
-Open question 10 at [paper_math.md:1026](paper_math.md#L1026) flags this. Real activations after softmax-attention can have heavier-than-sub-Gaussian tails, driven by a few high-attention tokens dominating. Laurent–Massart assumes Gaussian for the *exact* form; sub-Weibull would give polynomially decaying tails with weaker concentration (Kuchibhotla–Chakrabortty 2022).
-
-**Direction:** Estimate empirical Orlicz `ψ_α`-norms of residuals per layer. If `α < 2` (heavier than sub-Gaussian), switch concentration to the corresponding sub-Weibull form. The rate degrades but stays exponential up to the data extremes. The matched permutation provides distribution-free fallback if the bound fails.
-
-### 4.4 Within-class noise: latent variation vs deterministic
-
-The paper acknowledges at [paper_math.md:31](paper_math.md#L31) that for a fixed model, `h(a, b)` is deterministic. The "noise" is latent variation modeled as if i.i.d. across `(a, b)` pairs. There is no within-class variation in the deterministic setting — the noise is between pairs, not between draws. Treating this as i.i.d. sub-Gaussian is a *modeling choice*, not an experimental fact.
-
-**Direction:** Decompose empirical variance of correct activations into between-`(a, b)` variance (predictable from the helix basis) and residual variance (the "noise"). The latter is what should match Assumption GM. If residual variance is near zero — the helix basis explains everything — the test is degenerate and `T_n` becomes a property of the fitting, not the model. If it has structure, the noise model is misspecified in a specific way.
-
-### 4.5 The prompt-template fixed component
-
-[paper_math.md:29](paper_math.md#L29) extracts activations at the equals-sign token under a fixed prompt template. The prompt template contributes a deterministic offset that is the *same* across all `(a, b)` pairs. After mean-centering (Remark 2.4 at [paper_math.md:127](paper_math.md#L127)), this offset cancels — but only if it's exactly identical, which depends on tokenization and attention-mask details.
-
-**Direction:** Verify the prompt-template offset is constant within a tokclass bin. If it varies (e.g., because the tokenizer treats `(a, b) = (1, 2)` differently than `(a, b) = (12, 34)`), the centering is imperfect and a residual mean-shift contaminates the off-manifold residual.
+**Direction.** Run the synthetic toy with `softmax[s]` as the target functional. If the magnitude-vs-Taylor ratio is closer to 1× than the current 5× discrepancy ([Q8 at paper_math.md:1201](paper_math.md#L1201)), the argmax-flip story is the dominant source of the toy discrepancy and the smooth-probability variant is the right thing to use in the empirical paper.
 
 ---
 
-## 5. Assumption strain in the proofs
+## 3. The Llama bias term is in Theorem 6.5 but not propagated to Theorem 6.6
 
-### 5.1 WLOG re-centering of `ξ` (Open Q1)
+[Theorem 6.5](paper_math.md#L857-L868) gives the misspecification-aware sin-theta bound, with explicit `bias + variance` decomposition. Good. But [Theorem 6.6](paper_math.md#L872-L897), the composition with Theorem 1, only carries forward the `sin θ_max` term. There is no `bias(M)` term in the composed bound's right-hand side.
 
-Lemma 3.2 at [paper_math.md:203-214](paper_math.md#L203-L214) claims the tangent component of `ξ` can be absorbed into a redefined `m_c`. The argument is first-order in curvature, with second-order error `O(κ ‖P^T ξ‖)`. Open question 1 at [paper_math.md:1008](paper_math.md#L1008) flags the exponential-map calculation as not rigorous.
+For Llama 3.1 8B, the rewrite acknowledges this is the realistic setting (KT Figure 23, cited at [paper_math.md:761](paper_math.md#L761)). With `b(M) > 0`, the test does not become exact as `n_c → ∞`; the variance term shrinks but the bias floor is fixed. At some sample size, the test stops improving. This should be visible in the bound and in the empirical reporting.
 
-**Observation:** If the wrong-population `ξ` is large (e.g., `‖ξ‖ ≈ σ`), the second-order correction is comparable to the noise floor, and the re-centering is not free. The test then mixes "off-manifold" with "shifted-along-manifold-then-re-centered" — these are different mechanisms.
-
-**Direction:** Sketch the exponential-map calculation rigorously or state Lemma 3.2 with an explicit small-`ξ` assumption (e.g., `‖ξ‖ ≤ c · τ_min`). If `ξ` cannot be assumed small, replace the WLOG argument with a direct decomposition that reports tangent and normal components separately. The empirical work can then check which dominates.
-
-### 5.2 Linearization-error sharpness (Open Q2)
-
-`R_1(σ, κ_max) = O(σ² κ_max²)` at [paper_math.md:263](paper_math.md#L263). Open question 2 flags that the exact constant is not tracked. For small `σ κ_max`, this is a quadratic-in-`σ` term and is negligible; for the regime where `σ κ_max → c_0`, it is order-one and absorbs the headline signal.
-
-**Direction:** Compute `σ κ_max` empirically and report whether the regime is "deep in the small-curvature limit" (`σ κ_max < 0.1`, say) or "marginal" (`σ κ_max ∈ [0.1, c_0]`). The paper's claims have very different strength in these two regimes, and the relevant model–layer combinations may sort into both buckets.
-
-### 5.3 Cross-fitting under the alternative (Open Q6)
-
-Theorem 7.2 at [paper_math.md:812-825](paper_math.md#L812-L825) gives asymptotic normality at the null. Open question 6 at [paper_math.md:1018](paper_math.md#L1018) notes the non-asymptotic version at the alternative is not done. For sample-size planning, this is what matters.
-
-**Direction:** Either complete the calculation (Chernozhukov machinery, tedious but standard) or simulate calibrated alternatives in the toy companion to determine the empirical sample size required for the target effect sizes.
-
-### 5.4 Minimax lower bound's chaining (Open Q4)
-
-Theorem 5.2(b) at [paper_math.md:501-507](paper_math.md#L501-L507) claims `n ≥ C₂ r σ⁴ / Δ⁴ log(…)`. The proof at [paper_math.md:624-638](paper_math.md#L624-L638) uses two-point Le Cam plus a Fano chaining sketch. Open question 4 at [paper_math.md:1014](paper_math.md#L1014) explicitly says "this is the place where we are least confident."
-
-**Direction:** Two options. (1) Rederive the chaining carefully — the construction of an orthogonal packing of `r` perturbations of norm `Δ/√2` in `V` needs the explicit `r σ⁴ / Δ⁴` constant from Tsybakov Theorem 2.7. (2) Downgrade Theorem 5.2(b) to a *conjecture* with the two-point bound stated as a lemma. Section 12.5 at [paper_math.md:1086](paper_math.md#L1086) already flags this as plausible.
-
-### 5.5 The Davis–Kahan vs Wedin sharpness claim (Open Q5)
-
-[paper_math.md:690](paper_math.md#L690) claims operator-norm Wedin is sharper than Frobenius Davis–Kahan by a factor of `√K`. Open question 5 at [paper_math.md:1016](paper_math.md#L1016) flags that the OLS Frobenius bound (Lemma 6.3) may re-introduce the `√K` that operator-norm Wedin saves.
-
-**Direction:** Trace the `K` dependence through both forms and report which is tighter. If operator-norm Wedin is *not* sharper after the OLS step, the choice is a wash and Davis–Kahan is fine.
+**Direction.** Add a Theorem 6.6' that includes both bias and variance components. State explicitly: when `b(M) > 0`, the test asymptotic value is `||μ_ξ||² + tr(Σ_ξ) + O(b(M))`. Pre-register a misspecification check on Llama: fit the parametric model, compute the residual `||m̂(a, b) − h_c(a, b)||` per pair, and report its mean as `b̂(M)`. If `b̂(M)` is comparable to the headline `T_n` magnitude, the Llama result is a Llama-specific story (the helix is wrong for that model), not a falsification of the framework.
 
 ---
 
-## 6. Bin / permutation issues
+## 4. Layer selection has no post-selection inference correction
 
-### 6.1 Bin sparsity at 3200 bins
+The layer-selection protocol at [paper_math.md:29](paper_math.md#L29) chooses `ℓ*` by held-out `R²` on the helix basis, from a candidate set of four layers per model. The test then runs at `ℓ*`. This is a data-driven selection followed by inference on the selected object, and the math currently does nothing to account for the selection.
 
-Definition 8.1 at [paper_math.md:876](paper_math.md#L876) defines 3200 nominal bins, of which "approximately 200–300 are non-empty" on the 10,000-pair grid. Average bin size: 30–50 samples; rarest bins: very few. Within a bin with 5 samples, the permutation distribution has at most `5!` distinct values, which is 120 — fine for `α = 0.05` but tight.
+[Remark 5.7](paper_math.md#L754-L755) discusses Romano–Wolf for adaptive `V` selection. That is the right machinery, applied to the wrong choice variable. The selection that matters more for inference is `ℓ*`, not `V`.
 
-**Observation:** Lehmann–Romano exact conditional validity (Theorem 8.3) holds for *each* bin, but the bin-weighted average statistic mixes bins of very different sizes. A small bin contributes high-variance noise but may be weighted equally.
+The cost of correcting is small. With four candidates, Bonferroni gives a factor of `log 4 ≈ 1.4` in the threshold. Romano–Wolf gives less. Either is cheap relative to the loss of reviewer credibility from "we picked the layer that worked best, then ran the test."
 
-**Direction:** Either (a) Mantel–Haenszel-style precision-weighted combination, (b) drop bins below a size threshold (e.g., `≥ 10`), or (c) coarsen the bin definition until all bins have `≥ N_min`. Each has tradeoffs:
-- (a) is statistically efficient but assumes the within-bin effect is constant.
-- (b) is conservative but discards data.
-- (c) increases bin sizes but may merge mechanistically distinct strata.
-
-The current paper picks one of these implicitly via "bin-weighted average" at Section 3.3 of the main paper, without making the choice explicit in the math.
-
-### 6.2 Carry / decile / tokclass are correlated, not orthogonal
-
-The factorization `4 × 4 × 10 × 10 × 2 = 3200` assumes the components are independent. In reality, `carry(a, b)` is highly correlated with `decile(a)` and `decile(b)`: high-decile pairs cause more carries. The *effective* dimension of the bin space is probably closer to 2–3, not 5.
-
-**Direction:** Chi-squared test of independence on the bin components. If they're correlated (as expected), the matched permutation is technically valid but inefficient — it's conditioning on more than the data supports. A reduced bin definition (e.g., just `sumbin × tokclass`) might be statistically more powerful while still controlling for the relevant confounds.
-
-### 6.3 Tokenization class is binary
-
-The tokclass factor has 2 levels at [paper_math.md:879](paper_math.md#L879). But actual tokenizer behavior on numbers is more granular: BPE tokenizers may split `13` differently across leading-position vs middle-position; Llama 3.1's tokenizer treats digits idiosyncratically (per the Appendix H audit reference at [paper_math.md:47](paper_math.md#L47)).
-
-**Direction:** Either expand tokclass to capture finer behavior or marginalize the test across tokenization regimes. The choice affects whether the matched permutation conditions on "two activations tokenized the same way" or just "both in a coarse tokclass."
-
-### 6.4 The matched permutation tests means, not distributions
-
-The statistic `T_n^matched` is mean-based (sum of squared residuals). The matched permutation null tests *mean equality* conditional on bin. But two distributions can have the same residual-norm mean while differing in shape (e.g., one is multimodal, the other unimodal, both with the same `E[‖r‖²]`).
-
-**Direction:** Run a Cramér–von Mises or energy-statistic version of the permutation test, which compares full distributions. If it agrees with `T_n^matched`, the mean-based statistic is fine. If it dominates, the failure has distributional structure beyond the mean.
+**Direction.** Either (a) hold out a separate split for layer selection, run the test on a fresh split; or (b) report `T_n` at all four candidate layers with Romano–Wolf step-down across them; or (c) explicitly state in a remark that the test is conditional on a separately-justified `ℓ*` and not corrected for selection. Option (a) is the cleanest. Option (b) costs a factor of 1.4 in power. Option (c) is the minimum the math owes the reviewer.
 
 ---
 
-## 7. Causal proposition concerns
+## 5. The bin definition has three small but accumulating issues
 
-### 7.1 Argmax-flip non-smoothness (Open Q8)
+[Definition 8.1](paper_math.md#L1009-L1015) factorizes bins as `4 × 4 × 10 × 10 × 2 = 3200`. [Remark 8.4](paper_math.md#L1047) and [Remark 8.5](paper_math.md#L1049) acknowledge sparse bins and exchangeability diagnostics. These are good additions. Three issues remain.
 
-Remark 9.4 at [paper_math.md:976-982](paper_math.md#L976-L982) introduces log-sum-exp smoothing of `LD` at temperature `τ`. The Hessian bound `L = O(1/τ)` near argmax flips, so the bound deteriorates as `τ → 0`. Open question 8 at [paper_math.md:1022](paper_math.md#L1022) explicitly says "we do not have a clean way to handle this."
+**Correlated bin factors.** `carry(a, b)`, `decile(a)`, `decile(b)`, and `sumbin(a + b)` are not independent. High-decile pairs cause more carries; large `sumbin` is mechanically tied to high deciles. The effective dimension of the bin space is closer to two or three, not five. Conditioning on a five-factor product when the data only support a two-factor structure is statistically wasteful: it shrinks the within-bin sample size for no real exchangeability gain.
 
-**Directions worth exploring:**
-- Use the *signed gap* `LD(h) − LD(h_perturbed)` as the statistic rather than `LD(h)` directly; the gap is bounded in `[−2 max|logit|, 2 max|logit|]` and the argmax flip becomes a discrete event to count rather than a smoothness obstruction.
-- Stratify the causal analysis by *whether* the patch crosses an argmax boundary, and report the within-stratum effect.
-- Use a smooth surrogate like `softmax(logits)[s]` directly. This is smooth everywhere and the Hessian bound is uniform.
-- Use the *expected* logit-difference under temperature-`T` sampling instead of the deterministic argmax. This regularizes the boundary naturally.
+**Tokclass is binary.** Real tokenizer behavior on numbers is more granular than two classes. Llama 3.1's tokenizer treats digits idiosyncratically (Appendix H of the main paper, referenced at [paper_math.md:47](paper_math.md#L47)). If two activations with different tokenization patterns sit in the same tokclass bin, the bin is conditioning on less than it appears to.
 
-### 7.2 The injection patch `δ = μ̂_ξ` is a population summary
+**The matched test is mean-based.** `T_n^matched` averages squared residual norms. The matched permutation null tests mean equality conditional on bin. Two distributions can have the same mean residual norm while differing in shape: one multimodal, one unimodal, both with the same `E[||r||²]`. The mean test misses shape.
 
-Definition 9.2 at [paper_math.md:931](paper_math.md#L931) uses `Patch(h_c, V, 1, μ̂_ξ)`. But `μ̂_ξ` is the *average* failure direction; an individual wrong activation has its own `ξ(a, b)`. Patching with the population average doesn't reproduce any specific failure mode.
-
-**Direction:** Paired patching. For each wrong activation `h_w` with displacement `ξ̂(a, b)`, find a *correct* activation `h_c` with similar `(a, b)` (matched permutation gives this) and patch `Patch(h_c, V, 1, ξ̂(a_w, b_w))`. The ACE estimated this way is per-problem rather than population-average. The variance decomposition tells you whether the failure is a *consistent* shift (μ̂ alone explains it) or *problem-specific* (per-pair `ξ̂` is needed).
-
-### 7.3 Random-subspace baseline
-
-The `ACE_R` at [paper_math.md:932](paper_math.md#L932) uses `V^rand` of the same dimension and a random target `δ^rand`. Two concerns:
-- The random subspace is uniform on the Grassmannian, which is not a meaningful "null"; activations are anisotropic, so any uniform-random direction is *not* a comparable baseline.
-- The norm of `δ^rand` is not specified; if it's matched to `‖μ̂_ξ‖` it's a different question than if it's matched to noise scale.
-
-**Direction:** Use a *covariance-aware* random subspace: sample `V^rand` from the eigenstructure of the empirical activation covariance, matched in eigenvalue rank to `V`. This gives a "same-energy" null that the unconstrained Grassmannian doesn't. Report the empirical effect size under both definitions of the random baseline; if they agree, the choice doesn't matter, but if they differ, the empirical baseline is what reviewers will trust.
-
-### 7.4 Higher-order Taylor terms (Open Q7)
-
-Proposition 9.3's remainder is at order `L ‖μ̂_ξ‖² / 2`. Open question 7 at [paper_math.md:1020](paper_math.md#L1020) notes that the synthetic toy found a magnitude-vs-Taylor ratio of about 5× in one calibrated case, suggesting higher-order corrections or argmax-flip effects dominate.
-
-**Direction:** Either bound `‖∇³ LD‖` and add the third-order term explicitly, or run a Taylor-residual diagnostic on the empirical data: compute `LD(h + Δh) − LD(h) − ⟨∇LD, Δh⟩` and check whether it scales as `‖Δh‖²` (Taylor regime) or differently (argmax-flip or higher-order regime). The diagnostic answers Q7 and Q8 together.
+**Directions.** (a) Run a chi-squared independence test on the five bin factors. If they are heavily correlated (likely), pilot a coarsened bin function `φ_2 = (sumbin, tokclass)` and report `T_n^matched` under both. (b) Replace the binary tokclass with the categorical Llama-tokenization-pattern variable from the audit. (c) Add an energy-statistic or Cramér–von Mises version of the permutation test as a sensitivity check; if it agrees with the mean test, the mean test is fine.
 
 ---
 
-## 8. Estimator choice and misspecification
+## 6. The drift bound η_0 is testable but the rewrite leaves its scale unspecified
 
-### 8.1 Llama misspecification
+[Theorem 5.2(C)](paper_math.md#L567-L573) replaces the strict common-normal assumption by an empirical drift constant `η_0`. This is a real improvement. But the doc does not say what value of `η_0` is small enough for the bound to be useful, or how `η_0` scales with the helix's geometry.
 
-Section 6 at [paper_math.md:662](paper_math.md#L662) flags Llama 3.1 as a likely misspecification case (KT Figure 23). Theorem 6.5 handles this via an explicit bias term `b(M)`. But the composed bound at [paper_math.md:766-774](paper_math.md#L766-L774) doesn't include this bias term; it only includes the variance term.
+[Q5 at paper_math.md:1195](paper_math.md#L1195) notes the rewrite expects `η_0 = O(κ_max · diam(M))` for short curves, `O(1)` for long curves where the tangent rotates many times. For our setting (`A = 198`, four frequency components including `T = 2`), the tangent rotates roughly `198 / 2 = 99` times around the `T = 2` circle alone. The "long curve" regime is the realistic one. `η_0 = O(1)` means the additive error term in [Theorem 5.2(C)](paper_math.md#L571), which is `O(η_0 D_max²)`, is the same order as the headline signal `||μ_ξ||²` whenever `D_max² ≈ ||μ_ξ||²`.
 
-**Direction:** Restate Theorem 6.6 to include both bias and variance components when `b(M) > 0`. The bias term is non-vanishing as `n_c → ∞`, so the test does not become exact; this should be disclosed clearly in empirical reporting. For Llama, the bound's variance shrinks with `n_c` but the bias floor is fixed — at some `n_c` the test stops improving.
-
-### 8.2 The basis is *the helix basis*
-
-Definition 6.1 at [paper_math.md:667](paper_math.md#L667) uses `b_j(a) = (linear, cos, sin)` from the helix. This is KT's basis, taken as given. If wrong activations use a *different* basis (e.g., a basis sensitive to carry-propagation that doesn't appear in KT's correct-activation analysis), the helix basis cannot recover the relevant manifold for wrong activations.
-
-**Direction:** Cross-check by fitting a generic basis (Fourier in `a`, or B-splines) of comparable dimension and comparing recovered subspaces via sin-theta. If the generic basis recovers a substantially different `M̂`, the helix is not the unique scaffold and the paper's framing needs caveating ("we assume KT's basis is shared by correct and wrong populations; this is testable").
-
-### 8.3 PCA-on-class-means as a strawman
-
-Section 10 at [paper_math.md:992](paper_math.md#L992) dismisses PCA-on-bins via misspecification term `b(M) = O(1/K_bins)`. But for `K_bins = 200` non-empty bins, this is `b(M) ≈ 0.005` — small. The strawman argument may overstate the case.
-
-**Direction:** Run PCA-on-bins as a baseline and report its sin-theta to `M̂_param`. If they're close, the paper's argument for the parametric estimator is weakened: the choice becomes one of convenience rather than necessity, and reviewers may push back.
-
-### 8.4 Diffusion Maps as cross-validation only
-
-Section 10 at [paper_math.md:996](paper_math.md#L996) uses Diffusion Maps as cross-method validation only. But Diffusion Maps is intrinsic (Laplace–Beltrami operator) and would naturally handle curved manifolds without the second-order Taylor approximation. The reason cited for not using it as primary is the difficulty of a clean composed bound for embedding-then-lift.
-
-**Direction:** If Diffusion Maps recovers a manifold that *differs* from `M̂_param` in a structured way (not just noisy), that itself is a finding. Report sin-theta between `M̂_DM` and `M̂_param` per layer. If they disagree on curved-manifold features, the parametric estimator's linearity is biting and the test should use DM in the high-curvature regime.
+**Direction.** Either compute `η_0` analytically for the helix curve as a function of the recovered amplitudes, or pre-register an empirical estimate as part of [Remark 3.6](paper_math.md#L255-L262)'s diagnostic table. If `η̂_0` is `O(1)` on real models, restrict `V` to subspaces where the drift is genuinely small (the high-frequency `T ∈ {2, 5}` directions, after centering); the curve case (C) is then either the right tool or the wrong tool depending on the layer, not always either.
 
 ---
 
-## 9. Alternative methodological lenses worth piloting
+## 7. The noise model: anisotropy is in, but two adjacent concerns are not
 
-### 9.1 Conformal prediction for null calibration
+[Theorem 4.10](paper_math.md#L484-L525) handles anisotropic `Σ_ε` via `k_eff`. This addresses the layer-norm concern from the first pass. Two adjacent issues remain.
 
-The matched permutation gives distribution-free null calibration via exchangeability. Conformal prediction gives a different distribution-free guarantee (marginal coverage), with the advantage that it doesn't require within-bin exchangeability. The test becomes: *"is `r(h_w)` a conformal outlier with respect to `{r(h_c)}` at level `α`?"*
+**Sub-Weibull tails.** [Q10 at paper_math.md:1205](paper_math.md#L1205) commits to empirical diagnosis of tail heaviness. Real activations after softmax-attention can have polynomial tails when a few attention heads dominate. The Hanson–Wright inequality used in Theorem 4.10's proof at [paper_math.md:505-513](paper_math.md#L505-L513) assumes sub-Gaussian; sub-Weibull would degrade the rate from exponential to polynomial. The fallback is the matched permutation, which is distribution-free, so the test does not break, but the closed-form `p`-values from the chi-squared null become unreliable.
 
-**Direction:** Pilot conformal prediction on the residuals. Bypasses bin sparsity entirely. Gives marginal rather than conditional guarantee — a weaker but possibly more practical claim. Worth running as a sensitivity check against the headline permutation result. If they agree, the conditional bin structure is doing real work; if conformal is stronger, the bin definitions may be over-constraining.
+**Within-class noise as a modeling choice.** The rewrite acknowledges at [paper_math.md:33](paper_math.md#L33) that for a fixed model `h(a, b)` is deterministic. The "noise" is between-pair variation modeled as i.i.d. sub-Gaussian. There is no within-class variation in the deterministic setting. Treating between-pair variation as i.i.d. is convenient but is a modeling decision, not an experimental fact.
 
-### 9.2 Wild bootstrap
-
-If noise is heteroskedastic across `(a, b)`, permutation can over- or under-reject. Wild bootstrap (multiply each residual by a Rademacher random variable) gives an exchangeability-free alternative.
-
-**Direction:** Compare wild-bootstrap vs permutation `p`-values. Disagreement = heteroskedasticity is real and the permutation test should report a sensitivity bound.
-
-### 9.3 Score-based / energy-based OOD detection
-
-The test is fundamentally an out-of-manifold detector. OOD literature has matured (energy scores, Mahalanobis distance, gradient-based methods). Mahalanobis-on-residuals would account for anisotropic residual covariance without explicit `Σ` estimation.
-
-**Direction:** Mahalanobis-on-residuals as a baseline. If it matches `T_n^V`, the localization story is consistent. If Mahalanobis dominates, the test is missing variance structure that anisotropic-noise treatment would catch.
-
-### 9.4 Optimal transport between distributions
-
-The matched permutation tests mean differences. Wasserstein-2 between correct and wrong residual distributions tests *distributional* differences. Could detect shape differences that mean-tests miss.
-
-**Direction:** Wasserstein-2 as a secondary statistic. If `W_2` rejects but `T_n` does not, the failure has shape structure beyond the second moment.
-
-### 9.5 Riemannian gradient on `M` for the causal step
-
-For Proposition 9.3, instead of the Euclidean gradient `∇LD(h)`, use the Riemannian gradient on `M`: project `∇LD(h)` to `T_p M`. This decomposes "logit change due to motion along `M`" from "logit change due to motion off `M`" and gives a sharper specificity claim: the off-manifold gradient is what carries the causal signal. On-manifold gradient = "we moved to a different number"; off-manifold gradient = "we broke the representation."
-
-**Direction:** Decompose `∇LD(h)` into tangential and normal components at each correct activation. Compute the ratio `‖P^N ∇LD‖ / ‖P^T ∇LD‖`. If it's large, the model is sensitive to off-manifold perturbations specifically, supporting the causal claim. If it's small, motion along `M` matters more, and the off-manifold story is weaker.
-
-### 9.6 Information geometry on output distribution
-
-Each activation `h` induces a softmax distribution over output tokens. The Fisher–Rao metric on this distribution space is natural. Off-manifold `h` could correspond to off-manifold *output distributions*, which has a clean Riemannian structure and a chi-squared concentration via Stein.
-
-**Direction:** Explore as long-term direction, probably out of scope for BlackboxNLP. Most natural if the paper later generalizes beyond addition.
-
-### 9.7 SAE-based subspace identification
-
-If sparse autoencoders trained on these models have identified arithmetic-specific features, the localized subspace `V` should overlap with those features. A side-by-side comparison would give an *independent verification* of `V`.
-
-**Direction:** Look up SAE features for GPT-J, Pythia, Llama 3.1 if available (Anthropic's SAEs, EleutherAI's). Compute overlap (cosine similarity between SAE-feature directions and `V`'s basis). If overlap is high, `V` is mechanistically grounded; if low, the geometric `V` is a different object than the SAE features, which is also informative.
+**Direction.** As part of the synthetic toy validation, run the test under both Gaussian and `t(ν=4)` noise (heavy-tailed). Compare permutation `p`-values and chi-squared `p`-values. If they agree to the second decimal, sub-Gaussian is fine in practice. If chi-squared is consistently too liberal, the empirical paper should use permutation as primary and report chi-squared as a sensitivity.
 
 ---
 
-## 10. Scope and generalization
+## 8. The estimator scope is parametric-only, with no cross-validation against a generic basis
 
-### 10.1 Two-digit addition only
+[Section 6](paper_math.md#L759-L902) builds the recovery theory around `M̂_param` exclusively. [Section 10](paper_math.md#L1167-L1179) treats the four other estimators (diffusion maps, kernel PCA, local PCA, PCA-on-bins) as cross-method validation only. The first-pass concern was that the helix basis is KT's, taken as given, and a wrong-population basis might be different.
 
-Section 12.3 at [paper_math.md:1062](paper_math.md#L1062) restricts to KT's scope. Reviewer attack 2 at [paper_math.md:1080](paper_math.md#L1080) ("wrong examples are just harder") is acknowledged. Within "two-digit addition," wrong activations may be concentrated at *specific* problem types (carries, e.g.) and the test may be entirely driven by that subpopulation.
+The rewrite does not engage with this. There is no protocol for fitting a generic basis (Fourier in `a`, B-splines, or a local low-rank approximation) and comparing the recovered subspace to `M̂_param`. If the wrong population uses representational structure that is *not* in the helix basis (a carry-propagation direction that does not appear in correct-activation analysis), the parametric estimator cannot recover it, and `T_n` measures the wrong thing.
 
-**Direction:** Stratify the headline `T_n` by problem type (no-carry, one-carry, two-carry). If the effect is in one stratum only, report that explicitly and reframe the contribution as "carry-specific failure geometry" rather than generic "off-manifold failure." This is a sharper claim, not a weaker one, but it changes the title.
+This is a low-cost addition. Fit a B-spline basis of comparable dimension to the helix (`K = 8`), recover its column span, compute `sin θ_max` between the two recovered subspaces. If they agree (`sin θ < 0.1`), the helix is the unique scaffold up to noise, and the parametric framing is justified. If they disagree, the empirical paper has a real follow-up question.
 
-### 10.2 Equals-sign token only
-
-[paper_math.md:29](paper_math.md#L29) extracts activations at the equals-sign token. KT argued this is where the answer-helix lives. Wrong activations may have detectable off-manifold structure at *earlier* token positions (where the carry should propagate) that is invisible at `=`.
-
-**Direction:** Replicate the test at the digit tokens of `a` and `b`, not just `=`. If failure is upstream of `=`, the equals-sign-only analysis misses where it actually happens, and the paper's mechanistic claim is weaker than it could be.
-
-### 10.3 Per-model `n_c` heterogeneity
-
-Llama 3.1 8B has `n_c ≈ 98%` of 10,000, leaving `n_w ≈ 200`. GPT-J has `n_c ≈ 80%`, `n_w ≈ 2000`. The power for Llama is bottlenecked by `n_w`, not `n_c`. The paper's sample-size analysis doesn't distinguish the two regimes.
-
-**Direction:** Recompute the power calculation at [paper_math.md:497](paper_math.md#L497) with `n = min(n_c, n_w)` substituted (the paper does this), but note that for Llama the effective power is dominated by `n_w = 200`. Minimum-detectable `Δ` for Llama is `~5×` larger than for GPT-J. Empirical claims should be per-model with explicit power.
-
-### 10.4 Layer selection contamination
-
-Section 3.6 of the main paper (referenced from [paper_math.md:27](paper_math.md#L27)) selects `ℓ*` by held-out `R²` on the helix basis. The selection is data-driven; the test is then run on the selected layer. This is a *post-selection* inference setup that the math does not currently account for.
-
-**Direction:** Either (a) hold out a separate split for layer selection vs testing, (b) report `T_n` at all candidate layers and apply Bonferroni / Romano–Wolf correction, or (c) acknowledge the post-selection issue in a remark. Option (b) loses a factor `log(4)` ≈ 1.4 in power, which is cheap.
-
-### 10.5 Greedy decoding at temperature 0
-
-[paper_math.md:31](paper_math.md#L31) fixes temperature 0. Real model usage often involves non-zero temperature; failures under sampling may have different geometric structure than failures under greedy decoding (which are model-deterministic).
-
-**Direction:** Out of scope for this paper but worth flagging as a follow-up: do the off-manifold residuals at temperature `T > 0` reproduce the temperature-0 story? If not, the failure-geometry framing is regime-specific.
+**Direction.** Add a B-spline-basis comparison to the synthetic toy first; if it works, fold into the empirical pipeline as a one-page appendix. The math doc can stay as-is; this is a methodology check, not a theoretical extension.
 
 ---
 
-## 11. Cross-cutting themes
+## 9. Scope: equals-token-only and per-model n_w heterogeneity are unchanged
 
-These observations recur across multiple sections. Worth treating as priorities for the next review pass.
+Two scope decisions from the first pass remain.
 
-### 11.1 Verifiability of assumptions
+**Equals-sign-only.** Activations are extracted at the equals-sign token ([paper_math.md:31](paper_math.md#L31)). KT's argument is that the answer-helix lives there. The failure may live upstream: the carry-propagation step happens at the digit tokens of `a` and `b`, before the `=`. If the off-manifold structure is at the digit positions and is integrated away by the time the model writes the answer, the equals-token analysis sees the symptom, not the source.
 
-GM, BD, REG are stated as if they hold; the paper notes (Section 3.2) that some will be verified empirically. A *prerequisite-check table* — for each assumption, the diagnostic that confirms or refutes it on this dataset — would make the conditional structure clear. If an assumption fails, the corresponding theorem's claim should be downgraded with the failure mode documented.
+**Per-model `n_w`.** Llama 3.1 has `n_c ≈ 9800` and `n_w ≈ 200`. GPT-J has `n_c ≈ 8050` and `n_w ≈ 1950`. The power for Llama is bottlenecked by `n_w`, and the minimum-detectable `Δ` for Llama is roughly `√(1950 / 200) ≈ 3.1×` larger than for GPT-J. The math at [paper_math.md:580](paper_math.md#L580) substitutes `n = min(n_c, n_w)`, which is technically right but understates the asymmetry: per-model power calculations should be presented separately, not aggregated.
 
-### 11.2 Per-period decomposition as a sharp interpretive lens
-
-The most promising methodological extension is decomposing residuals by harmonic period `T`. Low cost, leverages the parametrization already in hand, converts a generic "off-manifold" claim into a *digit-scale mechanistic* claim. May be the single highest-value addition to the empirical pipeline.
-
-### 11.3 Geodesic / Riemannian as sensitivity, not replacement
-
-The clean chi-squared null and closed-form `p`-values from the Euclidean residual are statistically valuable. Replacing them wholesale loses the sharp inference. The right role for Riemannian methods is as a *parallel statistic* run alongside the Euclidean one, with disagreement flagged as evidence of curvature mattering.
-
-### 11.4 The matched permutation does heavy lifting
-
-Theorem 8.3 carries the credibility argument against the "wrong is just harder" attack. Its assumptions (bin definition, exchangeability) deserve more scrutiny than the headline theorems. Bin sparsity, dependence among bin components, and tokclass coarseness are all open. Worth a separate section in the appendix justifying the bin choice.
-
-### 11.5 Causal proposition is the weakest link
-
-Proposition 9.3 has the most uncertain math (argmax flip, choice of `δ`, random baseline). Yet the causal step is what the framing in Section 12.4 leans on to distinguish the paper from KT. The math here likely needs the most revision; the synthetic-toy 5× discrepancy is a warning sign.
-
-### 11.6 Curvature is consistently the second-order story that may be first-order
-
-Across Sections 1, 3, 5, the curvature constant `κ_max` is treated as bounded and well-behaved. For the helix's high-frequency components, this is the assumption that empirically may not hold. A `κ_max` audit per layer is the highest-leverage diagnostic.
+Both are noted at [Section 12.3](paper_math.md#L1262-L1267) as out of scope. That is defensible for a workshop submission. The equals-sign-only scope in particular is worth one sentence in the empirical paper acknowledging that an upstream-token analysis is the natural follow-up.
 
 ---
 
-## 12. What I have not investigated and might
+## 10. Methods worth piloting in parallel with the headline pipeline
 
-- **Synthetic-toy reproducibility.** The paper notes (Section 12.8) that 27/27 pre-registered checks passed in the toy. I have not reviewed the toy itself; if it does not include the cases above (heavy tails, anisotropic noise, misspecification, high curvature), it gives less assurance than it appears. Worth a follow-up read of `toy/`.
-- **Empirical `Σ_ε` structure.** No empirical estimate of activation noise in this document. The isotropic assumption is the highest-leverage one; an early pilot would tell us how much trouble it's in. Probably one notebook's worth of work.
-- **KT Figure 23 specifically.** The Llama misspecification reference is cited but I have not read KT's Figure 23. If Llama deviates from the helix *structurally* (different basis, different period set), the parametric estimator is the wrong tool there, not just slightly biased.
-- **Comparison to mechanistic-interpretability baselines.** SAE-derived subspaces, attention-head decompositions, gradient-attribution methods. Worth a side-by-side: does our `V` align with a known mechanistically-identified subspace? If yes, the paper has independent validation; if no, an explanation is owed.
-- **Babel cluster availability for the per-period pilot.** [scripts/](scripts/) has Phase-2 scripts on A6000. A per-period decomposition pilot would be a small additional notebook.
-- **Whether the prompt template affects helix recovery.** Different prompt templates may yield different `{u_*}` direction vectors. KT used a specific template; we inherit it. Robustness across templates is a sanity check.
+These are not blockers. They are sensitivity checks and alternative lenses that, run cheaply alongside the main test, would either confirm the headline finding or sharpen it.
 
----
+**Geodesic vs ambient distance.** The closest-point projection at [paper_math.md:56](paper_math.md#L56) uses ambient Euclidean norm. For a 1D curve with closed-form parameterization, geodesic distance is also closed-form. Compute both versions of `T_n` on the toy. If they agree, the linearization regime holds; if they disagree, curvature matters at the data scale and the parametric estimator's linearity is biting.
 
-## 13. Specific lines to revisit on the next pass
+**Lattice distance `d_lattice`.** For `h ∈ M_S`, recover the parameter `t̂(h)` via the closed-form parameterization, then compute `d_lattice(h) = min_{k ∈ ℤ ∩ [0, A]} |t̂ − k|`. This directly tests the integer-lattice hypothesis. Two activations with the same `||r_within||²` could correspond to a near-miss to integer (small `d_lattice`) versus a half-integer parameter (`d_lattice ≈ 0.5`). Reporting `d_lattice` distinguishes these.
 
-Quick index of references I want to come back to:
+**Mahalanobis-on-residuals.** As an OOD baseline. Computes `r(h)^T Σ̂_r^{-1} r(h)` where `Σ̂_r` is the empirical correct-population residual covariance. Naturally handles anisotropic structure without fitting `Σ_ε` directly. If it matches `T_n^V`, the localization story is consistent. If Mahalanobis dominates, the test is missing variance structure that an anisotropic-noise treatment would catch.
 
-- [paper_math.md:27](paper_math.md#L27) — layer selection protocol; post-selection inference question
-- [paper_math.md:54](paper_math.md#L54) — closest-point projection definition; ambient vs geodesic
-- [paper_math.md:63](paper_math.md#L63) — reach lower-bound discussion
-- [paper_math.md:107-110](paper_math.md#L107-L110) — `T = 2` degeneracy and `m = 8`/`m = 9` choice
-- [paper_math.md:149](paper_math.md#L149) — within-span residual definition
-- [paper_math.md:152-156](paper_math.md#L152-L156) — three failure modes (re-examine for harmonic refinement)
-- [paper_math.md:200](paper_math.md#L200) — isotropic Gaussian noise assumption
-- [paper_math.md:229](paper_math.md#L229) — `σ κ_max ≤ c_0` regularity assumption
-- [paper_math.md:263](paper_math.md#L263) — `R_1(σ, κ_max)` linearization error
-- [paper_math.md:295](paper_math.md#L295) — Taylor remainder for `Π_M`
-- [paper_math.md:443-450](paper_math.md#L443-L450) — Remark 4.9, different noise across populations
-- [paper_math.md:452-459](paper_math.md#L452-L459) — Remark 4.10, anisotropic effective dimension
-- [paper_math.md:501-507](paper_math.md#L501-L507) — Theorem 5.2(b) minimax lower bound (downgrade candidate)
-- [paper_math.md:662](paper_math.md#L662) — Llama misspecification reference
-- [paper_math.md:766-774](paper_math.md#L766-L774) — composed bound (missing bias term)
-- [paper_math.md:876-879](paper_math.md#L876-L879) — bin definition (3200 bins, ~200-300 non-empty)
-- [paper_math.md:931-932](paper_math.md#L931-L932) — causal patches and random baseline
-- [paper_math.md:976-982](paper_math.md#L976-L982) — log-sum-exp smoothing of `LD`
-- [paper_math.md:1006-1027](paper_math.md#L1006-L1027) — open questions section
+**Wasserstein-2 between residual distributions.** As a distributional sensitivity check. If `W_2` rejects but `T_n^matched` does not, the failure has shape structure beyond the second moment.
+
+These are one notebook each. The right time to run them is during the synthetic toy validation, not after the empirical results land.
 
 ---
 
-## 14. Status
+## 11. What the rewrite addressed (so we do not re-flag)
 
-None of the above are decisions. They are observations from a single pass through [paper_math.md](paper_math.md) plus the Riemannian / topology discussion. The likely next moves, in roughly decreasing leverage:
+Pulled from the AI-reviewer-feedback log at [paper_math.md:1207-1230](paper_math.md#L1207-L1230) and verified against the current draft:
 
-1. **Per-period (harmonic) decomposition of residuals.** High interpretive payoff, low cost. Converts "off-manifold" into a digit-scale mechanistic claim.
-2. **Empirical anisotropic-noise diagnostic.** Determines whether Theorem 1's isotropic form is sharp or loose. One notebook.
-3. **Verification of `σ κ_max ≤ c_0`** per (model, layer). Determines whether the linearization remainder is negligible. Closed-form calculation.
-4. **Stratification of `T_n` by problem type** (carry structure). Answers the "wrong is just harder" attack at the *signal* level, not just calibration.
-5. **Decision on whether to downgrade Theorem 5.2(b)** to a conjecture. Already plausible per Section 12.5 of [paper_math.md](paper_math.md).
-6. **Bin definition audit:** correlated factors, sparsity, weight choice.
-7. **Empirical comparison of `M̂_param` to `M̂_DM` and PCA-on-bins.** Validates or undermines the estimator choice.
-8. **Causal proposition diagnostics:** Taylor-residual check, argmax-flip stratification, covariance-aware random baseline.
+- **κ_max diagnostics** are now first-class via [Remark 3.6](paper_math.md#L255-L262). The first-pass concern about verifiability is closed.
+- **Anisotropic noise** has [Theorem 4.10](paper_math.md#L484-L525) with `k_eff` and Hanson–Wright concentration. The first-pass concern about layer-norm artifacts is closed.
+- **Minimax matching rate (5.2b)** is downgraded to a conjecture, exactly as the first pass recommended. The two-point Le Cam bound is presented as the only proven lower bound.
+- **Curve case (C)** replaces the strict `V ⊆ ⋂_p N_p M` by an explicit drift bound `η_0`, addressing the first-pass concern about that assumption being unrealistic (though see Section 6 above for what is still open about `η_0`).
+- **Permutation framework** now cites Freedman–Lane / Anderson–Robinson / Hemerik–Goeman, states exchangeability as `h ⊥ y | φ(a, b)`, and adds [Remark 8.4](paper_math.md#L1047) on sparse bins and [Remark 8.5](paper_math.md#L1049) on exchangeability diagnostics. The first-pass concern about the bin/permutation argument being under-specified is closed.
+- **Cross-fitting Neyman-orthogonality** is verified by the explicit Gateaux calculation at [paper_math.md:957-998](paper_math.md#L957-L998). The first-pass concern about `√n`-consistency is closed at the null. (The alternative-side argument is still flagged at [Q7](paper_math.md#L1199); see Section 7 above.)
+- **`D_max²` looseness** in the composed bound is addressed by [Remark 6.7](paper_math.md#L899-L902), which distinguishes uncentered from centered widths and notes the unstable-subspace sharpening.
+- **Sectional-vs-extrinsic curvature** terminology is fixed at [paper_math.md:67](paper_math.md#L67) (the new "Note on curvature terminology" paragraph).
 
-Open questions 1, 4, 6, 8 from Section 11 of [paper_math.md](paper_math.md) are the ones that should be Barnábás-routed before the writeup is finalized.
+Eight items closed; seven still live, distributed across Sections 1-9 above. The hit rate on the first pass was higher than I expected.
 
 ---
 
-*End of observations. Re-read before the next math-revision pass.*
+## 12. Specific lines to revisit on the next pass
+
+A short index for the next read-through, by section:
+
+- [paper_math.md:33](paper_math.md#L33): the deterministic-model framing for noise. Worth checking whether Section 4's i.i.d. sub-Gaussian framing reads consistently with this.
+- [paper_math.md:91-110](paper_math.md#L91-L110): helix definition and `T = 2` degeneracy. Center of the per-period decomposition argument (Section 1 above).
+- [paper_math.md:138-181](paper_math.md#L138-L181): three failure modes and Pythagorean decomposition. Where the per-period extension lives if added.
+- [paper_math.md:255-262](paper_math.md#L255-L262): Remark 3.6 diagnostic table. Confirm `η̂` is included; it is, but the scaling concern in Section 6 above is not addressed in the remark itself.
+- [paper_math.md:484-525](paper_math.md#L484-L525): Theorem 4.10 anisotropic version. Hanson–Wright proof outline; check `k_eff` estimator concentration claim at [paper_math.md:523](paper_math.md#L523).
+- [paper_math.md:567-573](paper_math.md#L567-L573): Theorem 5.2(C) drift bound. The `η_0` scaling story is at [Q5 / paper_math.md:1195](paper_math.md#L1195).
+- [paper_math.md:597-599](paper_math.md#L597-L599): conjectured matching rate (5.2b). The Ingster pointer is correct; the question is whether the workshop audience cares about the rigorous version.
+- [paper_math.md:761-868](paper_math.md#L761-L868): Theorem 6.5 misspecification. Where the bias term is defined; check that Theorem 6.6 either propagates it or explicitly notes the omission.
+- [paper_math.md:957-998](paper_math.md#L957-L998): Neyman-orthogonality calculation. The alternative-side argument's threshold needs sharpening.
+- [paper_math.md:1009-1015](paper_math.md#L1009-L1015): bin definition. The five-factor independence assumption is implicit; Section 5 above.
+- [paper_math.md:1136-1143](paper_math.md#L1136-L1143): Alignment Assumption (ALN). The `c_0 = 0.3` threshold needs justification or removal.
+- [paper_math.md:1154-1161](paper_math.md#L1154-L1161): Remark 9.4 log-sum-exp smoothing. The `O(1/τ)` Hessian behavior is acknowledged but unresolved.
+- [paper_math.md:1184-1205](paper_math.md#L1184-L1205): open questions for Barnábás. Q1, Q5, Q7, Q8, Q9, Q10 all map to live concerns above.
+
+---
+
+## 13. Priority ordering for the next math-revision pass
+
+Roughly in decreasing leverage, with the workshop submission as the target audience:
+
+1. **Per-period harmonic decomposition** (Section 1). The single biggest interpretive payoff for the smallest mathematical addition. If only one item from this list lands before the empirical pipeline runs, this is it.
+2. **Llama bias term in the composed bound** (Section 3). Cheap to add, prevents a reviewer from claiming the framework is silently wrong on the realistic case.
+3. **Layer-selection post-selection inference** (Section 4). A one-paragraph remark or a one-table extension is enough; pretending the selection does not affect inference is a known foot-gun.
+4. **Drop or justify the `c_0 = 0.3` threshold** in (ALN) (Section 2.2). One unjustified number in a math paper is one too many.
+5. **Paired-patching `ACE_S`** (Section 2.1). Adds two lines to Definition 9.2 and substantially sharpens the causal claim.
+6. **Drift constant `η_0` scaling** (Section 6). Either an a-priori bound or pre-registered empirical reporting; without it, Theorem 5.2(C)'s usefulness depends on a constant whose typical value is not characterized.
+7. **Bin-factor independence audit** (Section 5). One chi-squared test, decides whether the five-factor permutation is doing real work or just shrinking sample sizes.
+8. **Per-period failure profile in the empirical paper** (Section 1, applied). Even if the math doc keeps `T_n^V` as headline, the empirical paper should report the per-`T` decomposition.
+
+Items 1, 2, 3 are the "cannot be omitted" tier. Items 4-8 are the "would substantially improve the paper" tier. Methods worth piloting in parallel (Section 10) are below this in priority but should run during the toy validation rather than waiting for the empirical results.
+
+What I am deferring entirely for the workshop scope: the matching minimax bound (5.2b), generalization beyond two-digit addition, equals-token-only relaxation, alternative basis comparisons (kept as a sensitivity check, not a re-derivation). The rewrite's Section 12 makes the case for these being out of scope; I find that case persuasive given the BlackboxNLP timeline.
+
+---
+
+## 14. What I have not investigated and might
+
+- **The synthetic toy in detail.** The rewrite reports 27 of 27 pre-registered checks passed ([paper_math.md:1320](paper_math.md#L1320)) and a 5× magnitude-vs-Taylor discrepancy in one case ([Q8 / paper_math.md:1201](paper_math.md#L1201)). I have not read [toy/](toy/) closely enough to know whether the toy includes heavy-tailed noise, anisotropic noise, or curvature regimes that would stress-test the bounds in the way the empirical pipeline will.
+- **KT Figure 23 specifically.** Cited at [paper_math.md:761](paper_math.md#L761) as the Llama misspecification reference. If Llama deviates from the helix structurally (different basis, different period set, different dimension) rather than just noisily, the bias term in Theorem 6.5 is the wrong shape and the realistic story is "Llama needs its own representation" rather than "Llama is the parametric estimator's hard case."
+- **The `babel_execution_plan.md` and `full_paper_plan.md` rewrites.** Commit `f5f8b89` rewrote both substantially. I have read enough of the math doc to know what is in it; I have not done a similar pass on the plans. If the plans now over-specify items that the math has dropped or vice versa, the inconsistency would be worth catching before the pipeline runs.
+- **Comparison to mechanistic-interpretability baselines.** SAE-derived subspaces, attention-head decompositions, gradient-attribution methods. A side-by-side overlap test (cosine between `V` and known SAE features) would give an independent validation of the localized subspace. Probably out of scope for the workshop, but cheap to run.
+
+---
+
+*End of second-pass observations. The first-pass file at commit `b56397d` is superseded by this one. Re-read before the next math-revision pass.*
