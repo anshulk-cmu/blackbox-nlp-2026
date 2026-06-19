@@ -23,3 +23,13 @@ Thumbs.db
 .env
 *.token
 hf_token*
+
+#Archive files & papers
+archive/
+papers/
+
+#proposal
+PROPOSAL.md
+
+# Logs
+runlog.md

@@ -1,0 +1,28 @@
+# Model registry. Switch/extend via --model; nothing hardcoded in scripts.
+# Prompts/layers match the Bayesian Manifolds paper (KT 2025 Table 2). dtype: bfloat16|float16.
+primary: gpt-j-6b
+
+models:
+  gpt-j-6b:
+    hf_name: "EleutherAI/gpt-j-6B"
+    prompt_template: "Output ONLY a number. {a}+{b}="
+    dtype: bfloat16
+    n_layers: 28
+    layers: [7, 14, 21, 27]
+    block_path: "transformer.h"
+
+  pythia-6.9b:
+    hf_name: "EleutherAI/pythia-6.9b"
+    prompt_template: "Output ONLY a number. {a}+{b}="
+    dtype: bfloat16
+    n_layers: 32
+    layers: [8, 16, 24, 31]
+    block_path: "gpt_neox.layers"
+
+  llama-3.1-8b:
+    hf_name: "meta-llama/Llama-3.1-8B"
+    prompt_template: "The following is a correct addition problem.\n{a}+{b}="
+    dtype: bfloat16
+    n_layers: 32
+    layers: [8, 16, 24, 31]
+    block_path: "model.layers"

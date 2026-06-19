@@ -1,0 +1,18 @@
+{
+  "model_key": "llama-3.1-8b",
+  "hf_name": "meta-llama/Llama-3.1-8B",
+  "prompt_template": "The following is a correct addition problem.\n{a}+{b}=",
+  "answers": {
+    "checked": 199,
+    "n_bad": 0,
+    "bad": []
+  },
+  "prompts": {
+    "n_prompts": 10000,
+    "bad_operand_a_values": [],
+    "bad_operand_b_values": [],
+    "n_bad_eq": 0,
+    "bad_eq_examples": []
+  },
+  "gate_pass": true
+}

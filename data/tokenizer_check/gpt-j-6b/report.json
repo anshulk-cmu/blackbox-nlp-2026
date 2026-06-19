@@ -1,0 +1,18 @@
+{
+  "model_key": "gpt-j-6b",
+  "hf_name": "EleutherAI/gpt-j-6B",
+  "prompt_template": "Output ONLY a number. {a}+{b}=",
+  "answers": {
+    "checked": 199,
+    "n_bad": 0,
+    "bad": []
+  },
+  "prompts": {
+    "n_prompts": 10000,
+    "bad_operand_a_values": [],
+    "bad_operand_b_values": [],
+    "n_bad_eq": 0,
+    "bad_eq_examples": []
+  },
+  "gate_pass": true
+}
